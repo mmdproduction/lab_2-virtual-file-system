@@ -1,0 +1,3 @@
+[submodule "Extern/AVL"]
+	path = Extern/AVL
+	url = git@github.com:mmdproduction/lab_1-trees-.git
