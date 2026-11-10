@@ -9,6 +9,7 @@ set(CMAKE_EXPORT_COMPILE_COMMANDS ON)
 
 add_library(vfs_core STATIC
     Core/VirtualFileSystem/VirtualFileSystem.cpp
+    Core/VirtualFileSystem/FileNameIndex.cpp
 )
 
 target_include_directories(vfs_core PUBLIC

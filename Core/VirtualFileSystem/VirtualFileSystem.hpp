@@ -22,6 +22,7 @@ public:
 
     const FSNode& get_node(NodeId id) const;
 
-    NodeId create_directory(NodeId parent_id,
-                            const std::string& name);
+    NodeId create_directory(NodeId parent_id, const std::string& name);
+
+    NodeId attach_file(NodeId parent_id, const std::string& name, const std::string& physical_path);
 };
