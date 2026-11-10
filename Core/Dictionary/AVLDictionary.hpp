@@ -24,6 +24,9 @@ class AvlDictionary : public IDictionary<TKey, TValue> {
         }
     };
 
+private:
+    AVLTree<Entry, EntryCompare> tree_;
+
 public:
     AvlDictionary() = default;
 
@@ -75,7 +78,4 @@ public:
     void clear() noexcept override {
         tree_.clear();
     }
-
-private:
-    AVLTree<Entry, EntryCompare> tree_;
 };

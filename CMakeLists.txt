@@ -7,14 +7,16 @@ set(CMAKE_CXX_STANDARD_REQUIRED ON)
 set(CMAKE_CXX_EXTENSIONS OFF)
 set(CMAKE_EXPORT_COMPILE_COMMANDS ON)
 
-add_library(vfs_core INTERFACE)
+add_library(vfs_core STATIC
+    Core/VirtualFileSystem/VirtualFileSystem.cpp
+)
 
-target_include_directories(vfs_core INTERFACE
+target_include_directories(vfs_core PUBLIC
     "${CMAKE_CURRENT_SOURCE_DIR}/Core"
     "${CMAKE_CURRENT_SOURCE_DIR}/Extern/AVL/AVL"
 )
 
-target_sources(vfs_core INTERFACE
+target_sources(vfs_core PUBLIC
     "${CMAKE_CURRENT_SOURCE_DIR}/Core/Dictionary/IDictionary.hpp"
     "${CMAKE_CURRENT_SOURCE_DIR}/Core/Dictionary/AVLDictionary.hpp"
     "${CMAKE_CURRENT_SOURCE_DIR}/Core/Sequence/Sequence.hpp"
@@ -22,7 +24,7 @@ target_sources(vfs_core INTERFACE
     "${CMAKE_CURRENT_SOURCE_DIR}/Core/Sequence/ArraySequence/ArraySequence.hpp"
 )
 
-target_compile_features(vfs_core INTERFACE cxx_std_20)
+target_compile_features(vfs_core PUBLIC cxx_std_20)
 
 add_executable(vfs_app App/main.cpp)
 target_link_libraries(vfs_app PRIVATE vfs_core)
