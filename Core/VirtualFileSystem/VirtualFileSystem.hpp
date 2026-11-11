@@ -30,4 +30,6 @@ public:
 
     ArraySequence<NodeId> find_files(
     const std::string& name) const;
+
+    void rename(NodeId id, const std::string& new_name);
 };

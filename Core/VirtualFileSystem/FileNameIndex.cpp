@@ -74,3 +74,58 @@ ArraySequence<NodeId> FileNameIndex::find(
 
     return dictionary.get(name);
 }
+
+
+void FileNameIndex::rename(
+    const std::string& old_name,
+    const std::string& new_name,
+    NodeId id) {
+    if (old_name.empty() || new_name.empty() ||
+        id == kInvalidNodeId) {
+        throw std::invalid_argument("invalid file name or ID");
+    }
+
+    ArraySequence<NodeId> remaining_ids = find(old_name);
+
+    std::size_t position = 0;
+    while (position < remaining_ids.size() &&
+           remaining_ids.get(position) != id) {
+        ++position;
+    }
+
+    if (position == remaining_ids.size()) {
+        throw std::out_of_range("file ID not found");
+    }
+
+    if (old_name == new_name) {
+        return;
+    }
+
+    remaining_ids.remove_at(position);
+
+    ArraySequence<NodeId> updated_ids = find(new_name);
+
+    for (std::size_t i = 0; i < updated_ids.size(); ++i) {
+        if (updated_ids.get(i) == id) {
+            throw std::invalid_argument(
+                "file ID already indexed for this name");
+        }
+    }
+
+    updated_ids.append(id);
+
+    if (!dictionary_->contains_key(new_name)) {
+        dictionary_->add(new_name, ArraySequence<NodeId>{});
+    }
+
+    ArraySequence<NodeId>& destination =
+        dictionary_->get(new_name);
+
+    if (remaining_ids.size() == 0) {
+        dictionary_->remove(old_name);
+    } else {
+        dictionary_->get(old_name).swap(remaining_ids);
+    }
+
+    destination.swap(updated_ids);
+}

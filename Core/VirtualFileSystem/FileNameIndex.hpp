@@ -21,4 +21,8 @@ public:
     void remove(const std::string& name, NodeId id);
 
     ArraySequence<NodeId> find(const std::string& name) const;
+
+    void rename(const std::string& old_name,
+            const std::string& new_name,
+            NodeId id);
 };

@@ -155,3 +155,42 @@ ArraySequence<NodeId> VirtualFileSystem::find_files(
     const std::string& name) const {
     return file_index_.find(name);
 }
+
+void VirtualFileSystem::rename(
+    NodeId id, const std::string& new_name) {
+    if (id == root_id_) {
+        throw std::invalid_argument(
+            "cannot rename the root directory");
+    }
+
+    if (new_name.empty() || new_name == "." ||
+        new_name == ".." ||
+        new_name.find('/') != std::string::npos) {
+        throw std::invalid_argument("invalid node name");
+    }
+
+    FSNode& node = nodes_->get(id);
+
+    if (node.name == new_name) {
+        return;
+    }
+
+    const FSNode& parent = get_node(node.parent_id);
+
+    for (std::size_t i = 0; i < parent.children.size(); ++i) {
+        const NodeId sibling_id = parent.children.get(i);
+
+        if (sibling_id != id &&
+            get_node(sibling_id).name == new_name) {
+            throw std::invalid_argument("name already exists");
+        }
+    }
+
+    std::string prepared_name(new_name);
+
+    if (node.type == FSType::File) {
+        file_index_.rename(node.name, prepared_name, id);
+    }
+
+    node.name.swap(prepared_name);
+}
