@@ -5,16 +5,18 @@
 #include <utility>
 
 VirtualFileSystem::VirtualFileSystem(
-    std::unique_ptr<NodeDictionary> nodes)
-    : nodes_(std::move(nodes)) {
+    std::unique_ptr<NodeDictionary> nodes,
+    std::unique_ptr<FileIndexDictionary> index_dictionary)
+    : nodes_(std::move(nodes)),
+      file_index_(std::move(index_dictionary)) {
     if (!nodes_) {
         throw std::invalid_argument(
-            "node dictionary must not be null");
+            "Node dictionary must not be null");
     }
 
     if (nodes_->size() != 0) {
         throw std::invalid_argument(
-            "node dictionary must be empty");
+            "Node dictionary must be empty");
     }
 
     FSNode root;
@@ -135,7 +137,11 @@ NodeId VirtualFileSystem::attach_file(
     nodes_->add(file.id, file);
 
     try {
-        nodes_->get(parent_id).children = updated_children;
+        FSNode& mutable_parent = nodes_->get(parent_id);
+
+        file_index_.add(file.name, file.id);
+
+        mutable_parent.children.swap(updated_children);
     } catch (...) {
         nodes_->remove(file.id);
         throw;
@@ -143,4 +149,9 @@ NodeId VirtualFileSystem::attach_file(
 
     ++next_id_;
     return file.id;
+}
+
+ArraySequence<NodeId> VirtualFileSystem::find_files(
+    const std::string& name) const {
+    return file_index_.find(name);
 }

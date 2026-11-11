@@ -62,20 +62,25 @@ class DynamicArray{
     }
 
     void resize(std::size_t new_size) {
-    if (new_size == size_) {
-        return;
+        if (new_size == size_) {
+            return;
+        }
+
+        DynamicArray<T> result(new_size);
+
+        const std::size_t copy_size =
+            size_ < new_size ? size_ : new_size;
+
+        for (std::size_t i = 0; i < copy_size; ++i) {
+            result.data_[i] = data_[i];
+        }
+
+        std::swap(size_, result.size_);
+        std::swap(data_, result.data_);
     }
 
-    DynamicArray<T> result(new_size);
-
-    const std::size_t copy_size =
-        size_ < new_size ? size_ : new_size;
-
-    for (std::size_t i = 0; i < copy_size; ++i) {
-        result.data_[i] = data_[i];
+    void swap(DynamicArray<T>& other) noexcept {
+        std::swap(size_, other.size_);
+        std::swap(data_, other.data_);
     }
-
-    std::swap(size_, result.size_);
-    std::swap(data_, result.data_);
-}
 };

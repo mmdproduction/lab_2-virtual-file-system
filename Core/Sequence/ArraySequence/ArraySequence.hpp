@@ -79,4 +79,9 @@ public:
         storage_.resize(0);
         length_ = 0;
     }
+
+    void swap(ArraySequence<T>& other) noexcept {
+        storage_.swap(other.storage_);
+        std::swap(length_, other.length_);
+    }
 };

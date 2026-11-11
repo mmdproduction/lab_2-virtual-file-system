@@ -11,6 +11,8 @@ using FileIndexDictionary =
     IDictionary<std::string, ArraySequence<NodeId>>;
 
 class FileNameIndex {
+private:
+    std::unique_ptr<FileIndexDictionary> dictionary_;
 public:
     explicit FileNameIndex(
         std::unique_ptr<FileIndexDictionary> dictionary);
@@ -19,7 +21,4 @@ public:
     void remove(const std::string& name, NodeId id);
 
     ArraySequence<NodeId> find(const std::string& name) const;
-
-private:
-    std::unique_ptr<FileIndexDictionary> dictionary_;
 };
