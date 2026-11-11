@@ -32,4 +32,8 @@ public:
     const std::string& name) const;
 
     void rename(NodeId id, const std::string& new_name);
+
+    void move(NodeId id, NodeId new_parent_id);
+
+    void remove(NodeId id);
 };
