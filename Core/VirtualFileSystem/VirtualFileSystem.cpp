@@ -263,3 +263,66 @@ void VirtualFileSystem::move(NodeId id, NodeId new_parent_id) {
     mutable_new_parent.children.swap(updated_new_children);
     mutable_node.parent_id = new_parent_id;
 }
+
+void VirtualFileSystem::remove(NodeId id) {
+    if (id == root_id_) {
+        throw std::invalid_argument(
+            "cannot remove the root directory");
+    }
+
+    const FSNode& node = get_node(id);
+
+    if (node.type == FSType::Folder &&
+        node.children.size() != 0) {
+        throw std::invalid_argument("directory is not empty");
+    }
+
+    const NodeId parent_id = node.parent_id;
+    const FSNode& parent = get_node(parent_id);
+
+    std::size_t position = 0;
+
+    while (position < parent.children.size() &&
+           parent.children.get(position) != id) {
+        ++position;
+    }
+
+    if (position == parent.children.size()) {
+        throw std::logic_error(
+            "node is missing from its parent's children");
+    }
+
+    ArraySequence<NodeId> updated_children(parent.children);
+    updated_children.remove_at(position);
+
+    FSNode& mutable_parent = nodes_->get(parent_id);
+
+    if (node.type == FSType::File) {
+        file_index_.remove(node.name, id);
+    }
+
+    nodes_->remove(id);
+    mutable_parent.children.swap(updated_children);
+}
+
+void VirtualFileSystem::remove_recursive(NodeId id) {
+    if (id == root_id_) {
+        throw std::invalid_argument(
+            "cannot remove the root directory");
+    }
+
+    ArraySequence<NodeId> node_ids;
+    node_ids.append(id);
+
+
+    for (std::size_t i = 0; i < node_ids.size(); ++i) {
+        const FSNode& node = get_node(node_ids.get(i));
+
+        for (std::size_t j = 0; j < node.children.size(); ++j) {
+            node_ids.append(node.children.get(j));
+        }
+    }
+    for (std::size_t i = node_ids.size(); i > 0; --i) {
+        remove(node_ids.get(i - 1));
+    }
+}

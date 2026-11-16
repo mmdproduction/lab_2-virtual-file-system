@@ -36,4 +36,7 @@ public:
     void move(NodeId id, NodeId new_parent_id);
 
     void remove(NodeId id);
+    void remove_recursive(NodeId id);
+    
+    void save(std::ostream& output) const;
 };
