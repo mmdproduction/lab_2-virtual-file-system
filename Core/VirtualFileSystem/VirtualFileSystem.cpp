@@ -326,3 +326,58 @@ void VirtualFileSystem::remove_recursive(NodeId id) {
         remove(node_ids.get(i - 1));
     }
 }
+
+void VirtualFileSystem::save(std::ostream& output) const {
+    if (!output) {
+        throw std::runtime_error("output stream is not writable");
+    }
+
+    ArraySequence<NodeId> node_ids;
+    node_ids.append(root_id_);
+
+    for (std::size_t i = 0; i < node_ids.size(); ++i) {
+        const FSNode& node = get_node(node_ids.get(i));
+
+        for (std::size_t j = 0; j < node.children.size(); ++j) {
+            node_ids.append(node.children.get(j));
+        }
+    }
+
+    std::ostringstream buffer;
+    buffer.exceptions(std::ios::failbit | std::ios::badbit);
+    buffer.imbue(std::locale::classic());
+
+    buffer << "VFS 1\n"
+           << "ROOT " << root_id_ << '\n'
+           << "NEXT_ID " << next_id_ << '\n'
+           << "NODES " << node_ids.size() << '\n';
+
+    for (std::size_t i = 0; i < node_ids.size(); ++i) {
+        const FSNode& node = get_node(node_ids.get(i));
+        const char type = node.type == FSType::File ? 'F' : 'D';
+
+        buffer << node.id << ' '
+               << type << ' '
+               << node.parent_id << ' '
+               << std::quoted(node.name) << ' '
+               << std::quoted(node.physical_path) << '\n';
+    }
+
+    const std::string text = buffer.str();
+
+    if (text.size() > static_cast<std::size_t>(
+            std::numeric_limits<std::streamsize>::max())) {
+        throw std::length_error(
+            "saved data exceeds stream size limit");
+    }
+
+    output.write(
+        text.data(),
+        static_cast<std::streamsize>(text.size()));
+
+    if (!output) {
+        throw std::runtime_error(
+            "failed to save virtual file system");
+    }
+}
+

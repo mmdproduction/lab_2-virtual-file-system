@@ -2,6 +2,7 @@
 
 #include <memory>
 #include <string>
+#include <iosfwd>
 
 #include "Dictionary/IDictionary.hpp"
 #include "FSNode.hpp"
@@ -37,6 +38,8 @@ public:
 
     void remove(NodeId id);
     void remove_recursive(NodeId id);
-    
+
     void save(std::ostream& output) const;
+
+    static VirtualFileSystem load(std::istream& input, std::unique_ptr<NodeDictionary> nodes, std::unique_ptr<FileIndexDictionary> index_dictionary);
 };
