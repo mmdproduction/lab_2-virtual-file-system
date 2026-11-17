@@ -162,7 +162,6 @@ VirtualFileSystem VirtualFileSystem::load(
         if (version == 2) {
             node.access_policy = ReadVfsPolicy(reader);
         } else {
-            // Legacy snapshots have no grants. Only non-root nodes inherit.
             node.access_policy.inherit_from_parent = node.id != saved_root;
         }
 

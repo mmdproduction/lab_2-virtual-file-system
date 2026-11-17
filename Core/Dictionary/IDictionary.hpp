@@ -1,6 +1,7 @@
 #pragma once
 
 #include <cstddef>
+#include <functional>
 
 template <typename TKey, typename TValue>
 class IDictionary {
@@ -13,6 +14,8 @@ public:
 
     virtual TValue& get(const TKey& key) = 0;
     virtual const TValue& get(const TKey& key) const = 0;
+
+    virtual void for_each(const std::function<void(const TKey&, const TValue&)>& visitor) const = 0;
 
     virtual void add(const TKey& key, const TValue& value) = 0;
     virtual void remove(const TKey& key) = 0;

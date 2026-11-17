@@ -78,4 +78,12 @@ public:
     void clear() noexcept override {
         tree_.clear();
     }
+
+    void for_each(const std::function<void(const TKey&, const TValue&)>& visitor) const override {
+        tree_.traverse(
+            AVLTree<Entry, EntryCompare>::lkp(),
+            [&visitor](const Entry& entry) {
+                visitor(entry.key, entry.value);
+            });
+    }
 };
