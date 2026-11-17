@@ -24,6 +24,7 @@ public:
     NodeId root_id() const noexcept;
 
     const FSNode& get_node(NodeId id) const;
+    AccessRights get_access_rights(NodeId id, const User& user) const;
 
     NodeId create_directory(NodeId parent_id, const std::string& name);
 

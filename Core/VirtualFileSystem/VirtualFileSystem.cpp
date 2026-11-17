@@ -381,3 +381,45 @@ void VirtualFileSystem::save(std::ostream& output) const {
     }
 }
 
+AccessRights VirtualFileSystem::get_access_rights(
+    NodeId id, const User& user) const {
+    if (user.id == kInvalidUserId) {
+        throw std::invalid_argument("invalid user ID");
+    }
+
+    const FSNode* current = &get_node(id);
+
+    if (user.is_admin) {
+        return AccessRights{true, true};
+    }
+
+    AccessRights rights;
+
+    while (true) {
+        const AccessPolicy& policy = current->access_policy;
+
+        for (std::size_t i = 0; i < policy.rules.size(); ++i) {
+            const GroupAccessRule& rule = policy.rules.get(i);
+
+            if (rule.group_id == kInvalidGroupId) {
+                continue;
+            }
+
+            for (std::size_t j = 0; j < user.group_ids.size(); ++j) {
+                if (user.group_ids.get(j) == rule.group_id) {
+                    rights.read = rights.read || rule.rights.read;
+                    rights.write = rights.write || rule.rights.write;
+                    break;
+                }
+            }
+        }
+
+        if ((rights.read && rights.write) ||
+            !policy.inherit_from_parent ||
+            current->parent_id == kInvalidNodeId) {
+            return rights;
+        }
+
+        current = &get_node(current->parent_id);
+    }
+}

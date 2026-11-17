@@ -4,6 +4,7 @@
 #include <string>
 
 #include "Sequence/ArraySequence/ArraySequence.hpp"
+#include "AccessPolicy.hpp"
 
 using NodeId = std::uint64_t;
 
@@ -21,4 +22,5 @@ struct FSNode {
     NodeId parent_id = kInvalidNodeId;
     std::string physical_path;
     ArraySequence<NodeId> children;
+    AccessPolicy access_policy;
 };
