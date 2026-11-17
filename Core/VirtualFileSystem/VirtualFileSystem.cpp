@@ -1,6 +1,12 @@
 #include "VirtualFileSystem.hpp"
+#include "VirtualFileSystem/AccessTypes.hpp"
 
 #include <filesystem>
+#include <sstream>
+#include <ostream>
+#include <locale>
+#include <limits>
+#include <iomanip>
 #include <stdexcept>
 #include <utility>
 
@@ -24,6 +30,7 @@ VirtualFileSystem::VirtualFileSystem(
     root.type = FSType::Folder;
     root.name = "/";
     root.parent_id = kInvalidNodeId;
+    root.access_policy.inherit_from_parent = false;
 
     nodes_->add(root.id, root);
 
@@ -35,19 +42,26 @@ NodeId VirtualFileSystem::root_id() const noexcept {
     return root_id_;
 }
 
-const FSNode& VirtualFileSystem::get_node(NodeId id) const {
+const FSNode& VirtualFileSystem::get_node_unchecked(NodeId id) const {
     const NodeDictionary& dictionary = *nodes_;
     return dictionary.get(id);
 }
 
-NodeId VirtualFileSystem::create_directory(
-    NodeId parent_id, const std::string& name) {
+const FSNode& VirtualFileSystem::get_node(
+    NodeId id, const User& user) const {
+    require_read(id, user);
+    return get_node_unchecked(id);
+}
+
+NodeId VirtualFileSystem::create_directory(NodeId parent_id, const std::string& name, const User& user) {
+    require_write(parent_id, user);
+
     if (name.empty() || name == "." || name == ".." ||
         name.find('/') != std::string::npos) {
         throw std::invalid_argument("invalid directory name");
     }
 
-    const FSNode& parent = get_node(parent_id);
+    const FSNode& parent = get_node_unchecked(parent_id);
 
     if (parent.type != FSType::Folder) {
         throw std::invalid_argument("parent is not a folder");
@@ -55,7 +69,7 @@ NodeId VirtualFileSystem::create_directory(
 
     for (std::size_t i = 0; i < parent.children.size(); ++i) {
         const FSNode& child =
-            get_node(parent.children.get(i));
+            get_node_unchecked(parent.children.get(i));
 
         if (child.name == name) {
             throw std::invalid_argument("name already exists");
@@ -92,13 +106,14 @@ NodeId VirtualFileSystem::create_directory(
 NodeId VirtualFileSystem::attach_file(
     NodeId parent_id,
     const std::string& name,
-    const std::string& physical_path) {
+    const std::string& physical_path,  const User& user) {
+    require_write(parent_id, user); 
     if (name.empty() || name == "." || name == ".." ||
         name.find('/') != std::string::npos) {
         throw std::invalid_argument("invalid file name");
     }
 
-    const FSNode& parent = get_node(parent_id);
+    const FSNode& parent = get_node_unchecked(parent_id);
 
     if (parent.type != FSType::Folder) {
         throw std::invalid_argument("parent is not a folder");
@@ -106,7 +121,7 @@ NodeId VirtualFileSystem::attach_file(
 
     for (std::size_t i = 0; i < parent.children.size(); ++i) {
         const FSNode& child =
-            get_node(parent.children.get(i));
+            get_node_unchecked(parent.children.get(i));
 
         if (child.name == name) {
             throw std::invalid_argument("name already exists");
@@ -152,12 +167,24 @@ NodeId VirtualFileSystem::attach_file(
 }
 
 ArraySequence<NodeId> VirtualFileSystem::find_files(
-    const std::string& name) const {
-    return file_index_.find(name);
+    const std::string& name, const User& user) const {
+    if (user.id == kInvalidUserId) {
+        throw std::invalid_argument("invalid user ID");
+    }
+
+    const ArraySequence<NodeId> candidates = file_index_.find(name);
+    ArraySequence<NodeId> visible;
+    for (std::size_t i = 0; i < candidates.size(); ++i) {
+        const NodeId id = candidates.get(i);
+        if (get_access_rights(id, user).read) {
+            visible.append(id);
+        }
+    }
+    return visible;
 }
 
 void VirtualFileSystem::rename(
-    NodeId id, const std::string& new_name) {
+    NodeId id, const std::string& new_name, const User& user) {
     if (id == root_id_) {
         throw std::invalid_argument(
             "cannot rename the root directory");
@@ -170,18 +197,20 @@ void VirtualFileSystem::rename(
     }
 
     FSNode& node = nodes_->get(id);
+    require_write(id, user);
+    require_write(node.parent_id, user);
 
     if (node.name == new_name) {
         return;
     }
 
-    const FSNode& parent = get_node(node.parent_id);
+    const FSNode& parent = get_node_unchecked(node.parent_id);
 
     for (std::size_t i = 0; i < parent.children.size(); ++i) {
         const NodeId sibling_id = parent.children.get(i);
 
         if (sibling_id != id &&
-            get_node(sibling_id).name == new_name) {
+            get_node_unchecked(sibling_id).name == new_name) {
             throw std::invalid_argument("name already exists");
         }
     }
@@ -195,14 +224,18 @@ void VirtualFileSystem::rename(
     node.name.swap(prepared_name);
 }
 
-void VirtualFileSystem::move(NodeId id, NodeId new_parent_id) {
+void VirtualFileSystem::move(NodeId id, NodeId new_parent_id, const User& user) {
     if (id == root_id_) {
         throw std::invalid_argument(
             "cannot move the root directory");
     }
 
-    const FSNode& node = get_node(id);
-    const FSNode& new_parent = get_node(new_parent_id);
+    const FSNode& node = get_node_unchecked(id);
+    const FSNode& new_parent = get_node_unchecked(new_parent_id);
+
+    require_write(id, user);
+    require_write(node.parent_id, user);
+    require_write(new_parent_id, user);
 
     if (new_parent.type != FSType::Folder) {
         throw std::invalid_argument("new parent is not a folder");
@@ -220,12 +253,12 @@ void VirtualFileSystem::move(NodeId id, NodeId new_parent_id) {
                 "cannot move a directory into itself or its descendant");
         }
 
-        ancestor_id = get_node(ancestor_id).parent_id;
+        ancestor_id = get_node_unchecked(ancestor_id).parent_id;
     }
 
     for (std::size_t i = 0; i < new_parent.children.size(); ++i) {
         const FSNode& child =
-            get_node(new_parent.children.get(i));
+            get_node_unchecked(new_parent.children.get(i));
 
         if (child.name == node.name) {
             throw std::invalid_argument("name already exists");
@@ -233,7 +266,7 @@ void VirtualFileSystem::move(NodeId id, NodeId new_parent_id) {
     }
 
     const NodeId old_parent_id = node.parent_id;
-    const FSNode& old_parent = get_node(old_parent_id);
+    const FSNode& old_parent = get_node_unchecked(old_parent_id);
 
     std::size_t position = 0;
 
@@ -264,13 +297,16 @@ void VirtualFileSystem::move(NodeId id, NodeId new_parent_id) {
     mutable_node.parent_id = new_parent_id;
 }
 
-void VirtualFileSystem::remove(NodeId id) {
+void VirtualFileSystem::remove(NodeId id, const User& user) {
     if (id == root_id_) {
         throw std::invalid_argument(
             "cannot remove the root directory");
     }
 
-    const FSNode& node = get_node(id);
+    const FSNode& node = get_node_unchecked(id);
+
+    require_write(id, user);
+    require_write(node.parent_id, user);
 
     if (node.type == FSType::Folder &&
         node.children.size() != 0) {
@@ -278,7 +314,7 @@ void VirtualFileSystem::remove(NodeId id) {
     }
 
     const NodeId parent_id = node.parent_id;
-    const FSNode& parent = get_node(parent_id);
+    const FSNode& parent = get_node_unchecked(parent_id);
 
     std::size_t position = 0;
 
@@ -305,7 +341,7 @@ void VirtualFileSystem::remove(NodeId id) {
     mutable_parent.children.swap(updated_children);
 }
 
-void VirtualFileSystem::remove_recursive(NodeId id) {
+void VirtualFileSystem::remove_recursive(NodeId id, const User& user) {
     if (id == root_id_) {
         throw std::invalid_argument(
             "cannot remove the root directory");
@@ -316,18 +352,29 @@ void VirtualFileSystem::remove_recursive(NodeId id) {
 
 
     for (std::size_t i = 0; i < node_ids.size(); ++i) {
-        const FSNode& node = get_node(node_ids.get(i));
+        const FSNode& node = get_node_unchecked(node_ids.get(i));
+
+        require_write(node.id, user);
+        require_write(node.parent_id, user);
 
         for (std::size_t j = 0; j < node.children.size(); ++j) {
             node_ids.append(node.children.get(j));
         }
     }
     for (std::size_t i = node_ids.size(); i > 0; --i) {
-        remove(node_ids.get(i - 1));
+        remove(node_ids.get(i - 1), user);
     }
 }
 
-void VirtualFileSystem::save(std::ostream& output) const {
+void VirtualFileSystem::save(std::ostream& output, const User& user) const {
+    if (user.id == kInvalidUserId) {
+    throw std::invalid_argument("invalid user ID");
+    }
+
+    if (!user.is_admin) {
+        throw std::runtime_error(
+            "access denied: only administrators can save the VFS");
+    }
     if (!output) {
         throw std::runtime_error("output stream is not writable");
     }
@@ -336,7 +383,7 @@ void VirtualFileSystem::save(std::ostream& output) const {
     node_ids.append(root_id_);
 
     for (std::size_t i = 0; i < node_ids.size(); ++i) {
-        const FSNode& node = get_node(node_ids.get(i));
+        const FSNode& node = get_node_unchecked(node_ids.get(i));
 
         for (std::size_t j = 0; j < node.children.size(); ++j) {
             node_ids.append(node.children.get(j));
@@ -347,13 +394,13 @@ void VirtualFileSystem::save(std::ostream& output) const {
     buffer.exceptions(std::ios::failbit | std::ios::badbit);
     buffer.imbue(std::locale::classic());
 
-    buffer << "VFS 1\n"
+    buffer << "VFS 2\n"
            << "ROOT " << root_id_ << '\n'
            << "NEXT_ID " << next_id_ << '\n'
            << "NODES " << node_ids.size() << '\n';
 
     for (std::size_t i = 0; i < node_ids.size(); ++i) {
-        const FSNode& node = get_node(node_ids.get(i));
+        const FSNode& node = get_node_unchecked(node_ids.get(i));
         const char type = node.type == FSType::File ? 'F' : 'D';
 
         buffer << node.id << ' '
@@ -361,6 +408,17 @@ void VirtualFileSystem::save(std::ostream& output) const {
                << node.parent_id << ' '
                << std::quoted(node.name) << ' '
                << std::quoted(node.physical_path) << '\n';
+
+        const AccessPolicy& policy = node.access_policy;
+        buffer << "POLICY " << (policy.inherit_from_parent ? 1 : 0)
+               << ' ' << policy.rules.size() << '\n';
+
+        for (std::size_t j = 0; j < policy.rules.size(); ++j) {
+            const GroupAccessRule& rule = policy.rules.get(j);
+            buffer << "RULE " << rule.group_id << ' '
+                   << (rule.rights.read ? 1 : 0) << ' '
+                   << (rule.rights.write ? 1 : 0) << '\n';
+        }
     }
 
     const std::string text = buffer.str();
@@ -387,7 +445,7 @@ AccessRights VirtualFileSystem::get_access_rights(
         throw std::invalid_argument("invalid user ID");
     }
 
-    const FSNode* current = &get_node(id);
+    const FSNode* current = &get_node_unchecked(id);
 
     if (user.is_admin) {
         return AccessRights{true, true};
@@ -420,6 +478,54 @@ AccessRights VirtualFileSystem::get_access_rights(
             return rights;
         }
 
-        current = &get_node(current->parent_id);
+        current = &get_node_unchecked(current->parent_id);
+    }
+}
+
+
+void VirtualFileSystem::set_access_policy(
+    NodeId id, const AccessPolicy& policy, const User& user) {
+    if (user.id == kInvalidUserId) {
+        throw std::invalid_argument("invalid user ID");
+    }
+    if (!user.is_admin) {
+        throw std::runtime_error(
+            "access denied: only administrators can change policies");
+    }
+
+    FSNode& node = nodes_->get(id);
+
+    if (id == root_id_ && policy.inherit_from_parent) {
+        throw std::invalid_argument("root policy cannot inherit");
+    }
+
+    for (std::size_t i = 0; i < policy.rules.size(); ++i) {
+        const GroupId group_id = policy.rules.get(i).group_id;
+        if (group_id == kInvalidGroupId) {
+            throw std::invalid_argument("invalid group ID in access policy");
+        }
+
+        for (std::size_t j = 0; j < i; ++j) {
+            if (policy.rules.get(j).group_id == group_id) {
+                throw std::invalid_argument("duplicate group ID in access policy");
+            }
+        }
+    }
+
+    AccessPolicy prepared(policy);
+
+    node.access_policy.rules.swap(prepared.rules);
+    node.access_policy.inherit_from_parent = prepared.inherit_from_parent;
+}
+
+void VirtualFileSystem::require_write(NodeId id, const User& user) const {
+    if (!get_access_rights(id, user).write) {
+        throw std::runtime_error("access denied: write permission required");
+    }
+}
+
+void VirtualFileSystem::require_read(NodeId id, const User& user) const {
+    if (!get_access_rights(id, user).read) {
+        throw std::runtime_error("access denied: read permission required");
     }
 }

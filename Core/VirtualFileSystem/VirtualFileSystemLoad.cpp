@@ -52,6 +52,44 @@ std::string ReadVfsString(std::istream& input) {
     return value;
 }
 
+
+bool ReadVfsBool(std::istream& input) {
+    const NodeId value = ReadVfsNumber(input);
+    if (value > 1) {
+        throw std::runtime_error("VFS boolean flag must be 0 or 1");
+    }
+    return value == 1;
+}
+
+AccessPolicy ReadVfsPolicy(std::istream& input) {
+    ExpectVfsToken(input, "POLICY");
+    AccessPolicy policy;
+    policy.inherit_from_parent = ReadVfsBool(input);
+    const NodeId saved_count = ReadVfsNumber(input);
+    if (saved_count > std::numeric_limits<std::size_t>::max()) {
+        throw std::runtime_error("invalid access rule count");
+    }
+
+    const std::size_t count = static_cast<std::size_t>(saved_count);
+    for (std::size_t i = 0; i < count; ++i) {
+        ExpectVfsToken(input, "RULE");
+        GroupAccessRule rule;
+        rule.group_id = ReadVfsNumber(input);
+        rule.rights.read = ReadVfsBool(input);
+        rule.rights.write = ReadVfsBool(input);
+        if (rule.group_id == kInvalidGroupId) {
+            throw std::runtime_error("invalid group ID in saved access policy");
+        }
+        for (std::size_t j = 0; j < policy.rules.size(); ++j) {
+            if (policy.rules.get(j).group_id == rule.group_id) {
+                throw std::runtime_error("duplicate group ID in saved access policy");
+            }
+        }
+        policy.rules.append(rule);
+    }
+    return policy;
+}
+
 }  
 
 VirtualFileSystem VirtualFileSystem::load(
@@ -71,7 +109,8 @@ VirtualFileSystem VirtualFileSystem::load(
     reader.imbue(std::locale::classic());
 
     ExpectVfsToken(reader, "VFS");
-    if (ReadVfsNumber(reader) != 1) {
+    const NodeId version = ReadVfsNumber(reader);
+    if (version != 1 && version != 2) {
         throw std::runtime_error("unsupported VFS format version");
     }
     ExpectVfsToken(reader, "ROOT");
@@ -120,6 +159,13 @@ VirtualFileSystem VirtualFileSystem::load(
             throw std::runtime_error("invalid physical path for VFS node type");
         }
 
+        if (version == 2) {
+            node.access_policy = ReadVfsPolicy(reader);
+        } else {
+            // Legacy snapshots have no grants. Only non-root nodes inherit.
+            node.access_policy.inherit_from_parent = node.id != saved_root;
+        }
+
         result.nodes_->add(node.id, node);
         record_ids.append(node.id);
         if (node.id > max_id) {
@@ -135,9 +181,9 @@ VirtualFileSystem VirtualFileSystem::load(
         throw std::runtime_error("VFS root node is missing");
     }
 
-    const FSNode& root = result.get_node(saved_root);
+    const FSNode& root = result.get_node_unchecked(saved_root);
     if (root.type != FSType::Folder || root.parent_id != kInvalidNodeId ||
-        root.name != "/") {
+        root.name != "/" || root.access_policy.inherit_from_parent) {
         throw std::runtime_error("invalid VFS root node");
     }
 
@@ -150,7 +196,7 @@ VirtualFileSystem VirtualFileSystem::load(
         if (id == saved_root) {
             continue;
         }
-        const FSNode& node = result.get_node(id);
+        const FSNode& node = result.get_node_unchecked(id);
         if (node.parent_id == kInvalidNodeId || node.parent_id == id ||
             !result.nodes_->contains_key(node.parent_id)) {
             throw std::runtime_error("missing or invalid VFS parent");
@@ -161,7 +207,7 @@ VirtualFileSystem VirtualFileSystem::load(
             throw std::runtime_error("a file cannot be a VFS parent");
         }
         for (std::size_t j = 0; j < parent.children.size(); ++j) {
-            if (result.get_node(parent.children.get(j)).name == node.name) {
+            if (result.get_node_unchecked(parent.children.get(j)).name == node.name) {
                 throw std::runtime_error("duplicate names in a VFS directory");
             }
         }
@@ -171,7 +217,7 @@ VirtualFileSystem VirtualFileSystem::load(
     ArraySequence<NodeId> reachable_ids;
     reachable_ids.append(saved_root);
     for (std::size_t i = 0; i < reachable_ids.size(); ++i) {
-        const FSNode& node = result.get_node(reachable_ids.get(i));
+        const FSNode& node = result.get_node_unchecked(reachable_ids.get(i));
         for (std::size_t j = 0; j < node.children.size(); ++j) {
             reachable_ids.append(node.children.get(j));
         }
@@ -181,7 +227,7 @@ VirtualFileSystem VirtualFileSystem::load(
     }
 
     for (std::size_t i = 0; i < record_ids.size(); ++i) {
-        const FSNode& node = result.get_node(record_ids.get(i));
+        const FSNode& node = result.get_node_unchecked(record_ids.get(i));
         if (node.type == FSType::File) {
             result.file_index_.add(node.name, node.id);
         }
