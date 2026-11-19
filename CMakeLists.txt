@@ -53,5 +53,3 @@ add_executable(vfs_gui App/gui_main.cpp)
 target_link_libraries(vfs_gui PRIVATE vfs_gui_widgets)
 
 target_compile_options(vfs_gui PRIVATE -Wall -Wextra -Wpedantic)
-
-
