@@ -40,6 +40,7 @@ public:
     const std::string& name, const User& user) const;
 
     void rename(NodeId id, const std::string& new_name, const User& user);
+    void set_file_icon(NodeId id, FileIcon icon, const User& user);
 
     void move(NodeId id, NodeId new_parent_id, const User& user);
 

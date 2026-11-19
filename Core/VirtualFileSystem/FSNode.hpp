@@ -15,6 +15,10 @@ enum class FSType {
     Folder
 };
 
+enum class FileIcon : std::uint8_t {
+    Default, Text, Image, Audio, Video, Code
+};
+
 struct FSNode {
     NodeId id = kInvalidNodeId;
     FSType type = FSType::Folder;
@@ -23,4 +27,5 @@ struct FSNode {
     std::string physical_path;
     ArraySequence<NodeId> children;
     AccessPolicy access_policy;
+    FileIcon file_icon = FileIcon::Default;
 };

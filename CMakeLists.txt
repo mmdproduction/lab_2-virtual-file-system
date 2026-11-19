@@ -11,6 +11,8 @@ add_library(vfs_core STATIC
     Core/VirtualFileSystem/VirtualFileSystem.cpp
     Core/VirtualFileSystem/VirtualFileSystemLoad.cpp
     Core/VirtualFileSystem/FileNameIndex.cpp
+    Core/VirtualFileSystem/UserManager.cpp
+    Core/VirtualFileSystem/UserManagerLoad.cpp
 )
 
 target_include_directories(vfs_core PUBLIC
@@ -28,20 +30,28 @@ target_sources(vfs_core PUBLIC
 
 target_compile_features(vfs_core PUBLIC cxx_std_20)
 
-add_executable(vfs_app App/main.cpp)
-target_link_libraries(vfs_app PRIVATE vfs_core)
+find_package(Qt6 REQUIRED COMPONENTS Widgets)
 
-if(MSVC)
-    target_compile_options(vfs_app PRIVATE /W4 /permissive-)
-else()
-    target_compile_options(vfs_app PRIVATE -Wall -Wextra -Wpedantic)
-endif()
+add_library(vfs_gui_widgets STATIC
+    App/Gui/VfsTreeModel.cpp
+    App/Gui/MainWindow.cpp
+    App/Gui/AccountListModel.cpp
+    App/Gui/GroupPolicyModel.cpp
+    App/Gui/AdminDialog.cpp
+    App/Gui/UserChoiceModel.cpp
+    App/Gui/FileIconDialog.cpp
+    App/Gui/AutosaveController.cpp
+    App/Gui/ProjectStore.cpp
+    App/Gui/FileOpener.cpp
+    App/Gui/FileSearchModel.cpp
+    App/Gui/SearchDialog.cpp
+)
+target_include_directories(vfs_gui_widgets PUBLIC "${CMAKE_CURRENT_SOURCE_DIR}/App")
+target_link_libraries(vfs_gui_widgets PUBLIC vfs_core Qt6::Widgets)
 
-include(CTest)
+add_executable(vfs_gui App/gui_main.cpp)
+target_link_libraries(vfs_gui PRIVATE vfs_gui_widgets)
 
-if(BUILD_TESTING)
-    add_test(NAME vfs_core_smoke COMMAND vfs_app)
-    set_tests_properties(vfs_core_smoke PROPERTIES
-        PASS_REGULAR_EXPRESSION "player[.]png: 12 37"
-    )
-endif()
+target_compile_options(vfs_gui PRIVATE -Wall -Wextra -Wpedantic)
+
+

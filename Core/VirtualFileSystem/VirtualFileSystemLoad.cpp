@@ -110,7 +110,7 @@ VirtualFileSystem VirtualFileSystem::load(
 
     ExpectVfsToken(reader, "VFS");
     const NodeId version = ReadVfsNumber(reader);
-    if (version != 1 && version != 2) {
+    if (version != 1 && version != 2 && version != 3) {
         throw std::runtime_error("unsupported VFS format version");
     }
     ExpectVfsToken(reader, "ROOT");
@@ -159,10 +159,21 @@ VirtualFileSystem VirtualFileSystem::load(
             throw std::runtime_error("invalid physical path for VFS node type");
         }
 
-        if (version == 2) {
+        if (version >= 2) {
             node.access_policy = ReadVfsPolicy(reader);
         } else {
+            // Legacy snapshots have no grants. Only non-root nodes inherit.
             node.access_policy.inherit_from_parent = node.id != saved_root;
+        }
+
+        if (version >= 3) {
+            ExpectVfsToken(reader, "ICON");
+            const NodeId icon = ReadVfsNumber(reader);
+            if (icon > static_cast<NodeId>(FileIcon::Code) ||
+                (node.type != FSType::File && icon != 0)) {
+                throw std::runtime_error("invalid saved file icon");
+            }
+            node.file_icon = static_cast<FileIcon>(icon);
         }
 
         result.nodes_->add(node.id, node);

@@ -394,7 +394,14 @@ void VirtualFileSystem::save(std::ostream& output, const User& user) const {
     buffer.exceptions(std::ios::failbit | std::ios::badbit);
     buffer.imbue(std::locale::classic());
 
-    buffer << "VFS 2\n"
+    bool custom_icons = false;
+    for (std::size_t i = 0; i < node_ids.size(); ++i) {
+        if (get_node_unchecked(node_ids.get(i)).file_icon != FileIcon::Default) {
+            custom_icons = true;
+            break;
+        }
+    }
+    buffer << "VFS " << (custom_icons ? 3 : 2) << '\n' 
            << "ROOT " << root_id_ << '\n'
            << "NEXT_ID " << next_id_ << '\n'
            << "NODES " << node_ids.size() << '\n';
@@ -418,6 +425,9 @@ void VirtualFileSystem::save(std::ostream& output, const User& user) const {
             buffer << "RULE " << rule.group_id << ' '
                    << (rule.rights.read ? 1 : 0) << ' '
                    << (rule.rights.write ? 1 : 0) << '\n';
+        }
+        if (custom_icons) {
+            buffer << "ICON " << static_cast<unsigned>(node.file_icon) << '\n';
         }
     }
 
@@ -528,4 +538,16 @@ void VirtualFileSystem::require_read(NodeId id, const User& user) const {
     if (!get_access_rights(id, user).read) {
         throw std::runtime_error("access denied: read permission required");
     }
+}
+
+void VirtualFileSystem::set_file_icon(NodeId id, FileIcon icon, const User& user) {
+    require_write(id, user);
+    FSNode& node = nodes_->get(id);
+    if (node.type != FSType::File) {
+        throw std::invalid_argument("file icon can only be set on a file");
+    }
+    if (static_cast<unsigned>(icon) > static_cast<unsigned>(FileIcon::Code)) {
+        throw std::invalid_argument("unknown file icon");
+    }
+    node.file_icon = icon;
 }
