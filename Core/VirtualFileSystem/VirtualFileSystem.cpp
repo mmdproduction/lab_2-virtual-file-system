@@ -1,15 +1,9 @@
 #include "VirtualFileSystem.hpp"
 
 #include <filesystem>
-#include <iomanip>
-#include <limits>
-#include <locale>
-#include <ostream>
-#include <sstream>
 #include <stdexcept>
 #include <utility>
 
-#include "VirtualFileSystem/AccessTypes.hpp"
 
 VirtualFileSystem::VirtualFileSystem(
     std::unique_ptr<NodeDictionary> nodes,
