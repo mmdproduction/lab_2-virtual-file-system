@@ -3,24 +3,11 @@
 #include <ostream>
 #include <stdexcept>
 #include <system_error>
-#if defined(_WIN32)
-#include <windows.h>
-#include <bcrypt.h>
-#elif defined(__linux__)
 #include <sys/random.h>
-#elif defined(__APPLE__) || defined(__FreeBSD__) || defined(__OpenBSD__) || defined(__NetBSD__)
-#include <cstdlib>
-#else
-#error "Provide a system random source for this platform"
-#endif
+
 
 Guid GenerateGuid() {
   unsigned char bytes[16]{};
-#if defined(_WIN32)
-  if (BCryptGenRandom(nullptr, bytes, static_cast<ULONG>(sizeof(bytes)),
-                      BCRYPT_USE_SYSTEM_PREFERRED_RNG) != 0)
-    throw std::runtime_error("System UUID randomness failed");
-#elif defined(__linux__)
   std::size_t filled = 0;
   while (filled < sizeof(bytes)) {
     auto count = getrandom(bytes + filled, sizeof(bytes) - filled, 0);
@@ -31,9 +18,6 @@ Guid GenerateGuid() {
     if (!count) throw std::runtime_error("Empty UUID random source");
     filled += static_cast<std::size_t>(count);
   }
-#else
-  arc4random_buf(bytes, sizeof(bytes));
-#endif
   bytes[6] = (bytes[6] & 0x0f) | 0x40;
   bytes[8] = (bytes[8] & 0x3f) | 0x80;
   Guid id;
