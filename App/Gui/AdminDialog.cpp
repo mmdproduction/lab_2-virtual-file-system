@@ -1,254 +1,563 @@
 #include "AdminDialog.hpp"
 
 #include <QCheckBox>
-#include <QHeaderView>
-#include <QGridLayout>
+#include <QComboBox>
+#include <QFormLayout>
 #include <QHBoxLayout>
-#include <QInputDialog>
-#include <QItemSelectionModel>
+#include <QHeaderView>
 #include <QLabel>
 #include <QLineEdit>
-#include <QListView>
 #include <QMessageBox>
 #include <QPushButton>
-#include <QTableView>
+#include <QSignalBlocker>
+#include <QSplitter>
 #include <QTabWidget>
+#include <QTableView>
+#include <QTreeWidget>
+#include <QTreeWidgetItemIterator>
 #include <QVBoxLayout>
 
-#include <stdexcept>
-#include <utility>
-
-#include "Gui/UiTheme.hpp"
-
-AdminDialog::AdminDialog(UserManager& users, VirtualFileSystem& vfs, NodeId node,
-                         UserId actor, QWidget* parent)
-    : QDialog(parent), users_(users), vfs_(vfs), node_id_(node), actor_id_(actor) {
-    if (!users_.get_user(actor_id_).is_admin) {
-        throw std::runtime_error("Administrator access required");
+#include "AccessRuleModel.hpp"
+#include "AdminGrantModel.hpp"
+#include "PermissionLabels.hpp"
+#include "UiTheme.hpp"
+namespace {
+QPushButton* Button(const char* text, const char* name, QWidget* p) {
+  auto* b = new QPushButton(QString::fromUtf8(text), p);
+  b->setObjectName(name);
+  b->setAutoDefault(false);
+  return b;
+}
+void Table(QTableView* t) {
+  t->setSelectionBehavior(QAbstractItemView::SelectRows);
+  t->setSelectionMode(QAbstractItemView::SingleSelection);
+  t->setEditTriggers(QAbstractItemView::NoEditTriggers);
+  t->setShowGrid(false);
+  t->verticalHeader()->hide();
+  t->horizontalHeader()->setSectionResizeMode(QHeaderView::ResizeToContents);
+  t->horizontalHeader()->setStretchLastSection(true);
+}
+}  // namespace
+AdminDialog::AdminDialog(ProjectService& p, NodeId id, UserId actor,
+                         QWidget* parent)
+    : QDialog(parent),
+      project_(p),
+      node_id_(id ? id : p.root_id()),
+      actor_id_(actor) {
+  if (project_.user(actor).role == UserRole::User)
+    throw AccessDenied("Administrator required");
+  setObjectName("admin_dialog");
+  setWindowTitle("Администрирование");
+  setPalette(ui::DarkPalette());
+  setStyleSheet(ui::DarkStyleSheet());
+  resize(1180, 780);
+  setMinimumSize(940, 640);
+  auto* outer = new QVBoxLayout(this);
+  outer->setContentsMargins(20, 18, 20, 16);
+  auto* title = new QLabel("Управление доступом", this);
+  title->setObjectName("dialog_title");
+  outer->addWidget(title);
+  auto* badge = new QLabel(RoleLabel(project_.user(actor)), this);
+  outer->addWidget(badge);
+  auto* split = new QSplitter(this);
+  scopes_ = new QTreeWidget(split);
+  scopes_->setObjectName("admin_scopes");
+  scopes_->setHeaderLabel("Область управления");
+  scopes_->setMinimumWidth(190);
+  tabs_ = new QTabWidget(split);
+  split->setStretchFactor(1, 4);
+  outer->addWidget(split, 1);
+  auto* page = new QWidget(tabs_);
+  auto* l = new QVBoxLayout(page);
+  path_ = new QLabel(page);
+  path_->setObjectName("admin_path");
+  path_->setTextFormat(Qt::PlainText);
+  path_->setWordWrap(true);
+  l->addWidget(path_);
+  rule_model_ = new AccessRuleModel(project_, node_id_, actor_id_, this);
+  rules_ = new QTableView(page);
+  rules_->setObjectName("access_rules");
+  rules_->setModel(rule_model_);
+  Table(rules_);
+  l->addWidget(rules_, 1);
+  auto* form = new QFormLayout;
+  kind_ = new QComboBox(page);
+  kind_->setObjectName("principal_kind");
+  kind_->addItems({"Пользователь", "Группа"});
+  search_ = new QLineEdit(page);
+  search_->setObjectName("principal_search");
+  search_->setPlaceholderText("Поиск получателя по имени или ID");
+  principal_ = new QComboBox(page);
+  principal_->setObjectName("principal_choice");
+  form->addRow("Получатель", kind_);
+  form->addRow("Найти", search_);
+  form->addRow("Имя", principal_);
+  auto* decisions = new QWidget(page);
+  auto* dl = new QHBoxLayout(decisions);
+  dl->setContentsMargins(0, 0, 0, 0);
+  read_ = new QComboBox(decisions);
+  write_ = new QComboBox(decisions);
+  read_->setObjectName("read_decision");
+  write_->setObjectName("write_decision");
+  for (auto* c : {read_, write_})
+    c->addItems({"Не задано", "Разрешено", "Запрещено"});
+  dl->addWidget(new QLabel("Чтение", decisions));
+  dl->addWidget(read_, 1);
+  dl->addWidget(new QLabel("Запись", decisions));
+  dl->addWidget(write_, 1);
+  form->addRow("Решения", decisions);
+  rule_source_ = new QComboBox(page);
+  rule_source_->setObjectName("rule_source");
+  form->addRow("На основании", rule_source_);
+  l->addLayout(form);
+  rule_hint_ = new QLabel(page);
+  rule_hint_->setObjectName("rule_hint");
+  rule_hint_->setTextFormat(Qt::PlainText);
+  rule_hint_->setWordWrap(true);
+  l->addWidget(rule_hint_);
+  auto* actions = new QHBoxLayout;
+  auto* add = Button("Новое правило", "new_rule", page);
+  apply_ = Button("Применить правило", "apply_rule", page);
+  remove_ = Button("Удалить правило", "remove_rule", page);
+  actions->addWidget(add);
+  actions->addWidget(apply_);
+  actions->addWidget(remove_);
+  actions->addStretch();
+  l->addLayout(actions);
+  auto* inh = new QHBoxLayout;
+  inherit_ = new QCheckBox("Наследовать разрешения", page);
+  inherit_->setObjectName("inherit_permissions");
+  inherit_->setToolTip(
+      "Запреты предков продолжают действовать при отключении разрешений");
+  inherit_apply_ = Button("Применить наследование", "apply_inheritance", page);
+  inh->addWidget(inherit_);
+  inh->addStretch();
+  inh->addWidget(inherit_apply_);
+  l->addLayout(inh);
+  auto* e = new QHBoxLayout;
+  effective_user_ = new QComboBox(page);
+  effective_user_->setObjectName("effective_user");
+  e->addWidget(new QLabel("Итог для", page));
+  e->addWidget(effective_user_, 1);
+  l->addLayout(e);
+  effective_ = new QLabel(page);
+  effective_->setObjectName("effective_rights");
+  effective_->setTextFormat(Qt::PlainText);
+  effective_->setWordWrap(true);
+  l->addWidget(effective_);
+  tabs_->addTab(page, "Доступ");
+  auto* grantpage = new QWidget(tabs_);
+  auto* gl = new QVBoxLayout(grantpage);
+  auto* hint = new QLabel(
+      "Полномочия выдаются на выбранную слева папку и её "
+      "поддерево.\nПолучатель должен быть ниже уровнем; передавать можно "
+      "только возможности одного источника.",
+      grantpage);
+  hint->setWordWrap(true);
+  gl->addWidget(hint);
+  grant_model_ = new AdminGrantModel(project_, actor_id_, this);
+  grants_ = new QTableView(grantpage);
+  grants_->setObjectName("admin_grants");
+  grants_->setModel(grant_model_);
+  Table(grants_);
+  gl->addWidget(grants_, 1);
+  grant_user_ = new QComboBox(grantpage);
+  grant_user_->setObjectName("grant_recipient");
+  grant_source_ = new QComboBox(grantpage);
+  grant_source_->setObjectName("grant_source");
+  auto* gf = new QFormLayout;
+  gf->addRow("Кому", grant_user_);
+  gf->addRow("На основании", grant_source_);
+  gl->addLayout(gf);
+  const char* labels[] = {"Чтение содержимого", "Запись содержимого",
+                          "Настройка доступа", "Дальнейшее делегирование"};
+  for (unsigned i = 0; i < 4; ++i) {
+    capabilities_[i] = new QCheckBox(QString::fromUtf8(labels[i]), grantpage);
+    capabilities_[i]->setObjectName(QString("grant_cap_%1").arg(i));
+    gl->addWidget(capabilities_[i]);
+  }
+  auto* ga = new QHBoxLayout;
+  issue_ = Button("Выдать полномочия", "issue_grant", grantpage);
+  revoke_ = Button("Отозвать назначение…", "revoke_grant", grantpage);
+  ga->addWidget(issue_);
+  ga->addWidget(revoke_);
+  ga->addStretch();
+  gl->addLayout(ga);
+  tabs_->addTab(grantpage, "Полномочия");
+  if (project_.user(actor_id_).role == UserRole::SuperAdmin)
+    tabs_->addTab(accounts_page(), "Пользователи и группы");
+  status_ = new QLabel(this);
+  status_->setObjectName("admin_status");
+  status_->setWordWrap(true);
+  status_->setTextFormat(Qt::PlainText);
+  outer->addWidget(status_);
+  auto* close = Button("Закрыть", "admin_close", this);
+  outer->addWidget(close, 0, Qt::AlignRight);
+  connect(close, &QPushButton::clicked, this, &QDialog::reject);
+  connect(scopes_, &QTreeWidget::currentItemChanged, this,
+          [this](QTreeWidgetItem* i) {
+            if (i) {
+              node_id_ = i->data(0, Qt::UserRole).toULongLong();
+              refresh();
+            }
+          });
+  connect(search_, &QLineEdit::textChanged, this,
+          [this] { fill_principals(); });
+  connect(kind_, &QComboBox::currentIndexChanged, this,
+          [this] { fill_principals(); });
+  connect(principal_, &QComboBox::currentIndexChanged, this, [this] {
+    if (kind_->currentIndex() == 0) {
+      auto at = effective_user_->findData(principal_->currentData());
+      if (at >= 0) effective_user_->setCurrentIndex(at);
     }
-    const FSNode& target = vfs_.get_node(node_id_, users_.get_user(actor_id_));
-    setWindowTitle("Администрирование");
-    resize(1000, 690);
-    setMinimumSize(860, 580);
-    setPalette(ui::DarkPalette());
-    setStyleSheet(ui::DarkStyleSheet());
-    auto* layout = new QVBoxLayout(this);
-    layout->setContentsMargins(24, 22, 24, 20);
-    layout->setSpacing(16);
-    auto* title = new QLabel("Администрирование", this);
-    title->setObjectName("dialog_title");
-    layout->addWidget(title);
-    auto* subtitle = new QLabel("Пользователи, группы и доступ к объектам", this);
-    subtitle->setObjectName("subtitle");
-    layout->addWidget(subtitle);
-    auto* tabs = new QTabWidget(this);
-    tabs->setObjectName("admin_tabs");
-    layout->addWidget(tabs, 1);
-
-    user_model_ = new AccountListModel(users_, actor_id_, AccountListModel::Kind::Users, this);
-    group_model_ = new AccountListModel(users_, actor_id_, AccountListModel::Kind::Groups, this);
-    policy_model_ = new GroupPolicyModel(users_, vfs_, node_id_, actor_id_, this);
-    auto* accounts = new QWidget(tabs);
-    auto* accounts_layout = new QVBoxLayout(accounts);
-    accounts_layout->setContentsMargins(16, 18, 16, 12);
-    accounts_layout->setSpacing(12);
-    auto* columns = new QGridLayout;
-    columns->setSpacing(18);
-    columns->addWidget(new QLabel("Пользователи", accounts), 0, 0);
-    group_title_ = new QLabel("Группы", accounts);
-    columns->addWidget(group_title_, 0, 1);
-    user_list_ = new QListView(accounts);
-    user_list_->setObjectName("users_list");
-    user_list_->setModel(user_model_);
-    user_list_->setEditTriggers(QAbstractItemView::NoEditTriggers);
-    user_list_->setIconSize(QSize(20, 20));
-    group_list_ = new QListView(accounts);
-    group_list_->setObjectName("groups_list");
-    group_list_->setModel(group_model_);
-    group_list_->setEditTriggers(QAbstractItemView::NoEditTriggers);
-    group_list_->setIconSize(QSize(20, 20));
-    columns->addWidget(user_list_, 1, 0);
-    columns->addWidget(group_list_, 1, 1);
-    columns->setRowStretch(1, 1);
-    columns->setColumnStretch(0, 1);
-    columns->setColumnStretch(1, 1);
-    auto* user_buttons = new QHBoxLayout;
-    auto* group_buttons = new QHBoxLayout;
-    auto* create_user = new QPushButton("Создать", accounts);
-    create_user->setObjectName("create_user_button");
-    create_user->setIcon(ui::LineIcon(ui::Icon::Plus));
-    rename_user_ = new QPushButton("Переименовать", accounts);
-    rename_user_->setObjectName("rename_user_button");
-    auto* create_group = new QPushButton("Создать", accounts);
-    create_group->setObjectName("create_group_button");
-    create_group->setIcon(ui::LineIcon(ui::Icon::Plus));
-    rename_group_ = new QPushButton("Переименовать", accounts);
-    rename_group_->setObjectName("rename_group_button");
-    user_buttons->addWidget(create_user);
-    user_buttons->addWidget(rename_user_);
-    group_buttons->addWidget(create_group);
-    group_buttons->addWidget(rename_group_);
-    columns->addLayout(user_buttons, 2, 0);
-    columns->addLayout(group_buttons, 2, 1);
-    user_details_ = new QLabel(accounts);
-    user_details_->setObjectName("muted");
-    user_details_->setWordWrap(true);
-    columns->addWidget(user_details_, 3, 0);
-    empty_groups_ = new QLabel("Создайте группу, чтобы назначить ей пользователей.", accounts);
-    empty_groups_->setObjectName("muted");
-    empty_groups_->setWordWrap(true);
-    columns->addWidget(empty_groups_, 3, 1);
-    accounts_layout->addLayout(columns, 1);
-    auto* membership_note = new QLabel("Флажок у группы включает выбранного пользователя в её состав. Изменения применяются сразу.", accounts);
-    membership_note->setObjectName("muted");
-    membership_note->setWordWrap(true);
-    accounts_layout->addWidget(membership_note);
-    account_status_ = new QLabel(accounts);
-    account_status_->setObjectName("muted");
-    account_status_->setTextFormat(Qt::PlainText);
-    accounts_layout->addWidget(account_status_);
-    tabs->addTab(accounts, "Пользователи и группы");
-
-    auto* permissions = new QWidget(tabs);
-    auto* permissions_layout = new QVBoxLayout(permissions);
-    permissions_layout->setContentsMargins(16, 18, 16, 12);
-    permissions_layout->setSpacing(14);
-    auto* object = new QLabel(QString("%1: %2  ·  #%3")
-        .arg(target.type == FSType::Folder ? "Папка" : "Файл")
-        .arg(QString::fromStdString(target.name)).arg(static_cast<qulonglong>(node_id_)), permissions);
-    object->setTextFormat(Qt::PlainText);
-    permissions_layout->addWidget(object);
-    inherit_ = new QCheckBox("Наследовать разрешения родительской папки", permissions);
-    inherit_->setObjectName("inherit_policy");
-    inherit_->setChecked(policy_model_->inherits());
-    inherit_->setEnabled(node_id_ != vfs_.root_id());
-    permissions_layout->addWidget(inherit_);
-    auto* table = new QTableView(permissions);
-    table->setObjectName("group_policy_table");
-    table->setModel(policy_model_);
-    table->setShowGrid(false);
-    table->setSelectionBehavior(QAbstractItemView::SelectItems);
-    table->setEditTriggers(QAbstractItemView::NoEditTriggers);
-    table->verticalHeader()->hide();
-    table->verticalHeader()->setDefaultSectionSize(48);
-    table->horizontalHeader()->setSectionResizeMode(0, QHeaderView::Stretch);
-    table->horizontalHeader()->setSectionResizeMode(1, QHeaderView::ResizeToContents);
-    table->horizontalHeader()->setSectionResizeMode(2, QHeaderView::ResizeToContents);
-    permissions_layout->addWidget(table, 1);
-    auto* note = new QLabel("Здесь показаны локальные разрешения. Снятый флажок не запрещает доступ, полученный через другую группу или наследование. Чтение и запись назначаются независимо.", permissions);
-    note->setObjectName("muted");
-    note->setWordWrap(true);
-    permissions_layout->addWidget(note);
-    auto* policy_footer = new QHBoxLayout;
-    policy_status_ = new QLabel("Изменения прав сохраняются кнопкой «Применить».", permissions);
-    policy_status_->setObjectName("muted");
-    policy_status_->setWordWrap(true);
-    policy_footer->addWidget(policy_status_, 1);
-    auto* apply = new QPushButton("Применить", permissions);
-    apply->setObjectName("apply_policy_button");
-    policy_footer->addWidget(apply);
-    permissions_layout->addLayout(policy_footer);
-    tabs->addTab(permissions, "Права доступа");
-    auto* footer = new QHBoxLayout;
-    footer->addStretch();
-    auto* close = new QPushButton("Закрыть", this);
-    footer->addWidget(close);
-    layout->addLayout(footer);
-
-    connect(close, &QPushButton::clicked, this, &QDialog::accept);
-    connect(create_user, &QPushButton::clicked, this, [this] { edit_account(false, true); });
-    connect(rename_user_, &QPushButton::clicked, this, [this] { edit_account(false, false); });
-    connect(create_group, &QPushButton::clicked, this, [this] { edit_account(true, true); });
-    connect(rename_group_, &QPushButton::clicked, this, [this] { edit_account(true, false); });
-    connect(apply, &QPushButton::clicked, this, [this] { apply_policy(); });
-    connect(user_list_->selectionModel(), &QItemSelectionModel::currentChanged, this,
-            [this] { group_model_->set_selected_user(selected_user()); update_user_details(); });
-    connect(group_list_->selectionModel(), &QItemSelectionModel::currentChanged, this,
-            [this] { rename_group_->setEnabled(selected_group() != kInvalidGroupId); });
-    connect(group_model_, &QAbstractItemModel::dataChanged, this, [this] { update_user_details(); });
-    connect(policy_model_, &QAbstractItemModel::dataChanged, this, [this] {
-        policy_status_->setText("Есть несохранённые изменения прав.");
-    });
-    connect(inherit_, &QCheckBox::toggled, this, [this] {
-        policy_status_->setText("Есть несохранённые изменения прав.");
-    });
-    group_model_->set_error_handler([this](const QString& error) {
-        QMessageBox::warning(this, "Не удалось изменить состав группы", error);
-    });
-    group_model_->set_change_handler([this] { if (change_handler_) change_handler_(); });
-    refresh(actor_id_, kInvalidGroupId);
-}
-
-UserId AdminDialog::selected_user() const { return user_model_->id_at(user_list_->currentIndex()); }
-GroupId AdminDialog::selected_group() const { return group_model_->id_at(group_list_->currentIndex()); }
-
-void AdminDialog::refresh(UserId user_id, GroupId group_id) {
-    user_model_->reload();
-    group_model_->reload();
-    policy_model_->reload_groups();
-    QModelIndex user = user_model_->index_for_id(user_id);
-    if (!user.isValid() && user_model_->rowCount() != 0) user = user_model_->index(0);
-    user_list_->setCurrentIndex(user);
-    group_model_->set_selected_user(selected_user());
-    group_list_->setCurrentIndex(group_model_->index_for_id(group_id));
-    rename_group_->setEnabled(selected_group() != kInvalidGroupId);
-    empty_groups_->setVisible(group_model_->rowCount() == 0);
-    update_user_details();
-}
-
-void AdminDialog::update_user_details() {
-    const UserId id = selected_user();
-    rename_user_->setEnabled(id != kInvalidUserId);
-    if (id == kInvalidUserId) {
-        user_details_->clear();
-        group_title_->setText("Группы");
-        return;
-    }
-    const User& user = users_.get_user(id);
-    user_details_->setText(QString("#%1 · %2 · Групп: %3")
-        .arg(static_cast<qulonglong>(id))
-        .arg(user.is_admin ? "Администратор" : "Пользователь")
-        .arg(static_cast<qulonglong>(user.group_ids.size())));
-    group_title_->setTextFormat(Qt::PlainText);
-    group_title_->setText("Группы для " + QString::fromStdString(user.name));
-}
-
-void AdminDialog::edit_account(bool group, bool creating) {
-    UserId user_id = selected_user();
-    GroupId group_id = selected_group();
-    if (!creating && (group ? group_id == kInvalidGroupId : user_id == kInvalidUserId)) return;
-    const QString existing = creating ? QString() : QString::fromStdString(
-        group ? users_.get_group(group_id).name : users_.get_user(user_id).name);
-    bool accepted = false;
-    const QString name = QInputDialog::getText(this,
-        creating ? (group ? "Новая группа" : "Новый пользователь") : "Переименование",
-        "Имя:", QLineEdit::Normal, existing, &accepted);
-    if (!accepted) return;
+    effective();
+  });
+  connect(effective_user_, &QComboBox::currentIndexChanged, this,
+          [this] { effective(); });
+  connect(add, &QPushButton::clicked, this, [this] { new_rule(); });
+  connect(apply_, &QPushButton::clicked, this, [this] { apply_rule(); });
+  connect(remove_, &QPushButton::clicked, this, [this] { delete_rule(); });
+  connect(rules_->selectionModel(), &QItemSelectionModel::currentChanged, this,
+          [this] { select_rule(); });
+  connect(inherit_apply_, &QPushButton::clicked, this, [this] {
     try {
-        const std::string value = name.toUtf8().toStdString();
-        if (group) {
-            if (creating) group_id = users_.create_group(value, actor_id_);
-            else users_.rename_group(group_id, value, actor_id_);
-        } else {
-            if (creating) user_id = users_.create_user(value, actor_id_);
-            else users_.rename_user(user_id, value, actor_id_);
-        }
-        if (change_handler_) change_handler_();
-        refresh(user_id, group_id);
-        account_status_->setText(creating ? "Создано: " + name : "Имя изменено: " + name);
-    } catch (const std::exception& error) {
-        QMessageBox::warning(this, "Не удалось изменить настройки", QString::fromUtf8(error.what()));
+      auto before = project_.revision();
+      project_.set_inheritance(node_id_, inherit_->isChecked(), actor_id_,
+                               rule_source_->currentData().toULongLong());
+      changed(before);
+    } catch (const std::exception& e) {
+      error(e);
     }
+  });
+  connect(grant_source_, &QComboBox::currentIndexChanged, this,
+          [this] { grant_options(); });
+  connect(issue_, &QPushButton::clicked, this, [this] { issue_grant(); });
+  connect(revoke_, &QPushButton::clicked, this, [this] { revoke_grant(); });
+  connect(grants_->selectionModel(), &QItemSelectionModel::currentChanged, this,
+          [this] {
+            auto g = grant_model_->row(grants_->currentIndex().row());
+            bool ok = false;
+            if (g) try {
+                project_.preview_revoke(g->id, actor_id_);
+                ok = true;
+              } catch (const std::exception&) {
+              }
+            revoke_->setEnabled(ok);
+          });
+  fill_tree();
+  refresh();
 }
-
-void AdminDialog::apply_policy() {
+void AdminDialog::set_change_handler(std::function<void()> h) {
+  change_handler_ = std::move(h);
+}
+void AdminDialog::fill_tree() {
+  QSignalBlocker blocker(scopes_);
+  scopes_->clear();
+  auto* root = new QTreeWidgetItem(scopes_, QStringList("/"));
+  root->setData(0, Qt::UserRole,
+                QVariant::fromValue<qulonglong>(project_.root_id()));
+  root->setData(0, Qt::UserRole + 1, true);
+  std::function<void(QTreeWidgetItem*, NodeId)> append = [&](auto* parent,
+                                                             NodeId id) {
     try {
-        policy_model_->apply(inherit_->isChecked());
-        if (change_handler_) change_handler_();
-        policy_status_->setText("Права доступа сохранены.");
-    } catch (const std::exception& error) {
-        QMessageBox::warning(this, "Не удалось сохранить права", QString::fromUtf8(error.what()));
+      auto children = project_.administrative_children(id, actor_id_);
+      for (std::size_t i = 0; i < children.size(); ++i) {
+        const auto& n = children.get(i);
+        auto* item = new QTreeWidgetItem(
+            parent, QStringList(QString::fromStdString(n.name)));
+        item->setData(0, Qt::UserRole, QVariant::fromValue<qulonglong>(n.id));
+        item->setData(0, Qt::UserRole + 1, n.type == FSType::Folder);
+        item->setIcon(0,
+                      ui::LineIcon(n.type == FSType::Folder ? ui::Icon::Folder
+                                                            : ui::Icon::File));
+        if (n.type == FSType::Folder) append(item, n.id);
+      }
+    } catch (const AccessDenied&) {
     }
+  };
+  append(root, project_.root_id());
+  scopes_->expandAll();
+  QTreeWidgetItem* selected = root;
+  for (QTreeWidgetItemIterator i(scopes_); *i; ++i)
+    if ((*i)->data(0, Qt::UserRole).toULongLong() == node_id_) {
+      selected = *i;
+      break;
+    }
+  scopes_->setCurrentItem(selected);
+  node_id_ = selected->data(0, Qt::UserRole).toULongLong();
 }
-
-void AdminDialog::set_change_handler(std::function<void()> handler) { change_handler_ = std::move(handler); }
+void AdminDialog::fill_sources(QComboBox* c, AdminCapability cap) {
+  QSignalBlocker block(c);
+  auto keep = c->currentData();
+  c->clear();
+  if (project_.user(actor_id_).role == UserRole::SuperAdmin)
+    c->addItem("Суперадминистратор", QVariant::fromValue<qulonglong>(0));
+  else {
+    auto gs = project_.admin_sources(node_id_, actor_id_, cap);
+    for (std::size_t i = 0; i < gs.size(); ++i) {
+      auto& g = gs.get(i);
+      c->addItem(QString("#%1 · %2")
+                     .arg(g.id)
+                     .arg(QString::fromStdString(project_.administrative_path(
+                         g.scope_node_id, actor_id_))),
+                 QVariant::fromValue<qulonglong>(g.id));
+    }
+  }
+  auto at = c->findData(keep);
+  if (at >= 0) c->setCurrentIndex(at);
+}
+void AdminDialog::refresh() {
+  try {
+    path_->setText(QString::fromStdString(
+        project_.administrative_path(node_id_, actor_id_)));
+  } catch (const AccessDenied&) {
+    path_->setText("Выберите выданную область управления");
+  }
+  rule_model_->reload(node_id_);
+  grant_model_->reload();
+  fill_sources(rule_source_, AdminCapability::ManageAccess);
+  fill_sources(grant_source_, AdminCapability::DelegateAdministration);
+  {
+    QSignalBlocker b(effective_user_);
+    auto keep = effective_user_->currentData();
+    effective_user_->clear();
+    auto ids = project_.user_ids();
+    for (std::size_t i = 0; i < ids.size(); ++i) {
+      auto u = project_.user(ids.get(i));
+      effective_user_->addItem(
+          QString::fromStdString(u.name) + QString(" · #%1").arg(u.id),
+          QVariant::fromValue<qulonglong>(u.id));
+    }
+    auto at = effective_user_->findData(keep);
+    if (at >= 0) effective_user_->setCurrentIndex(at);
+  }
+  {
+    QSignalBlocker b(grant_user_);
+    auto keep = grant_user_->currentData();
+    grant_user_->clear();
+    auto actor = project_.user(actor_id_);
+    auto ids = project_.user_ids();
+    for (std::size_t i = 0; i < ids.size(); ++i) {
+      auto u = project_.user(ids.get(i));
+      if (u.role == UserRole::Admin && (actor.role == UserRole::SuperAdmin ||
+                                        actor.admin_level > u.admin_level))
+        grant_user_->addItem(
+            QString::fromStdString(u.name) +
+                QString(" · ур. %1 · #%2").arg(u.admin_level).arg(u.id),
+            QVariant::fromValue<qulonglong>(u.id));
+    }
+    auto at = grant_user_->findData(keep);
+    if (at >= 0) grant_user_->setCurrentIndex(at);
+  }
+  bool manage = project_.can_administer(node_id_, actor_id_,
+                                        AdminCapability::ManageAccess);
+  inherit_->setEnabled(manage);
+  inherit_apply_->setEnabled(manage);
+  try {
+    inherit_->setChecked(project_.policy_view(node_id_, actor_id_).inherits);
+  } catch (const AccessDenied&) {
+    inherit_->setChecked(false);
+  }
+  fill_principals();
+  new_rule();
+  grant_options();
+  revoke_->setEnabled(false);
+  effective();
+}
+void AdminDialog::fill_principals() {
+  auto keep = principal_->currentData();
+  QSignalBlocker b(principal_);
+  principal_->clear();
+  auto ids =
+      kind_->currentIndex() == 0 ? project_.user_ids() : project_.group_ids();
+  for (std::size_t i = 0; i < ids.size(); ++i) {
+    auto id = ids.get(i);
+    if (kind_->currentIndex() == 0) {
+      auto candidate = project_.user(id);
+      auto actor = project_.user(actor_id_);
+      if (candidate.role == UserRole::SuperAdmin || candidate.id == actor.id ||
+          (actor.role != UserRole::SuperAdmin &&
+           candidate.role == UserRole::Admin &&
+           candidate.admin_level >= actor.admin_level))
+        continue;
+    }
+    QString text = QString::fromStdString(kind_->currentIndex() == 0
+                                              ? project_.user(id).name
+                                              : project_.group(id).name) +
+                   QString(" · #%1").arg(id);
+    if (text.contains(search_->text(), Qt::CaseInsensitive))
+      principal_->addItem(text, QVariant::fromValue<qulonglong>(id));
+  }
+  auto at = principal_->findData(keep);
+  if (at >= 0) principal_->setCurrentIndex(at);
+  effective();
+}
+void AdminDialog::new_rule() {
+  editing_ = 0;
+  fill_principals();
+  read_->setCurrentIndex(0);
+  write_->setCurrentIndex(0);
+  bool ok = project_.can_administer(node_id_, actor_id_,
+                                    AdminCapability::ManageAccess) &&
+            rule_source_->count() > 0;
+  for (QWidget* w : std::initializer_list<QWidget*>{
+           kind_, principal_, search_, read_, write_, rule_source_})
+    w->setEnabled(ok);
+  apply_->setEnabled(ok);
+  remove_->setEnabled(false);
+  rule_hint_->setText(
+      ok ? "Новое локальное правило. «Не задано» не создаёт запрет."
+         : "На этот объект не выданы полномочия настройки доступа.");
+}
+void AdminDialog::select_rule() {
+  auto view = rule_model_->row(rules_->currentIndex().row());
+  if (!view) return;
+  auto& r = view->rule;
+  editing_ = r.id;
+  search_->clear();
+  kind_->setCurrentIndex(r.principal.kind == PrincipalKind::Group ? 1 : 0);
+  fill_principals();
+  auto selected =
+      principal_->findData(QVariant::fromValue<qulonglong>(r.principal.id));
+  if (selected < 0) {
+    principal_->addItem(
+        QString::fromStdString(r.principal.kind == PrincipalKind::User
+                                   ? project_.user(r.principal.id).name
+                                   : project_.group(r.principal.id).name),
+        QVariant::fromValue<qulonglong>(r.principal.id));
+    selected = principal_->count() - 1;
+  }
+  principal_->setCurrentIndex(selected);
+  if (r.issuer_id == actor_id_) {
+    auto source = rule_source_->findData(
+        QVariant::fromValue<qulonglong>(r.source_grant_id));
+    if (source >= 0) rule_source_->setCurrentIndex(source);
+  }
+  read_->setCurrentIndex(static_cast<int>(r.read));
+  write_->setCurrentIndex(static_cast<int>(r.write));
+  bool ok = view->editable && rule_source_->count() > 0;
+  for (QWidget* w : std::initializer_list<QWidget*>{
+           kind_, principal_, search_, read_, write_, rule_source_})
+    w->setEnabled(ok);
+  apply_->setEnabled(ok);
+  remove_->setEnabled(ok);
+  rule_hint_->setText(
+      QString("%1 · автор: %2 · источник: #%3")
+          .arg(QString::fromStdString(view->reason),
+               QString::fromStdString(project_.user(r.issuer_id).name))
+          .arg(r.source_grant_id));
+}
+void AdminDialog::apply_rule() {
+  try {
+    if (principal_->currentIndex() < 0)
+      throw std::invalid_argument("Выберите получателя");
+    auto before = project_.revision();
+    project_.upsert_rule(
+        node_id_, editing_,
+        {{kind_->currentIndex() == 0 ? PrincipalKind::User
+                                     : PrincipalKind::Group,
+          principal_->currentData().toULongLong()},
+         static_cast<PermissionDecision>(read_->currentIndex()),
+         static_cast<PermissionDecision>(write_->currentIndex())},
+        actor_id_, rule_source_->currentData().toULongLong());
+    changed(before);
+  } catch (const std::exception& e) {
+    error(e);
+  }
+}
+void AdminDialog::delete_rule() {
+  try {
+    auto before = project_.revision();
+    project_.remove_rule(node_id_, editing_, actor_id_,
+                         rule_source_->currentData().toULongLong());
+    changed(before);
+  } catch (const std::exception& e) {
+    error(e);
+  }
+}
+void AdminDialog::effective() {
+  if (!effective_ || !effective_user_ || effective_user_->currentIndex() < 0)
+    return;
+  try {
+    auto e = project_.explain(
+        node_id_, effective_user_->currentData().toULongLong(), actor_id_);
+    effective_->setText(
+        QString("Чтение: %1 · Запись: %2\n%3")
+            .arg(e.access.read ? "да" : "нет", e.access.write ? "да" : "нет",
+                 (e.reason == "Explicit or inherited deny"
+                      ? QString("Действует явный или унаследованный запрет")
+                  : e.reason == "Allowed by rule or assignment"
+                      ? QString("Разрешено правилом доступа или назначением")
+                      : QString("Подходящих разрешений нет"))));
+  } catch (const AccessDenied&) {
+    effective_->setText(
+        "Для просмотра итоговых прав нужно полномочие настройки доступа.");
+  }
+}
+void AdminDialog::grant_options() {
+  unsigned mask = 15;
+  if (project_.user(actor_id_).role != UserRole::SuperAdmin) {
+    mask = 0;
+    auto gs = project_.admin_sources(node_id_, actor_id_,
+                                     AdminCapability::DelegateAdministration);
+    for (std::size_t i = 0; i < gs.size(); ++i)
+      if (gs.get(i).id == grant_source_->currentData().toULongLong())
+        mask = gs.get(i).capabilities;
+  }
+  for (unsigned i = 0; i < 4; ++i) {
+    bool ok = (mask & (1U << i)) != 0;
+    capabilities_[i]->setEnabled(ok);
+    if (!ok) capabilities_[i]->setChecked(false);
+  }
+  // Core validates that the selected scope is a folder; empty folders are valid
+  // too.
+  issue_->setEnabled(
+      grant_source_->count() > 0 && grant_user_->count() > 0 &&
+      scopes_->currentItem() &&
+      scopes_->currentItem()->data(0, Qt::UserRole + 1).toBool());
+}
+void AdminDialog::issue_grant() {
+  try {
+    unsigned mask = 0;
+    for (unsigned i = 0; i < 4; ++i)
+      if (capabilities_[i]->isChecked()) mask |= 1U << i;
+    auto before = project_.revision();
+    project_.grant_admin({grant_user_->currentData().toULongLong(), node_id_,
+                          static_cast<std::uint8_t>(mask),
+                          grant_source_->currentData().toULongLong()},
+                         actor_id_);
+    changed(before);
+  } catch (const std::exception& e) {
+    error(e);
+  }
+}
+void AdminDialog::revoke_grant() {
+  try {
+    auto g = grant_model_->row(grants_->currentIndex().row());
+    if (!g) return;
+    auto impact = project_.preview_revoke(g->id, actor_id_);
+    if (QMessageBox::question(
+            this, "Отзыв полномочий",
+            QString(
+                "Будет удалено назначений: %1, правил доступа: %2. Продолжить?")
+                .arg(impact.grants.size())
+                .arg(impact.rules.size()),
+            QMessageBox::Yes | QMessageBox::No,
+            QMessageBox::No) != QMessageBox::Yes)
+      return;
+    auto before = project_.revision();
+    project_.revoke(g->id, actor_id_, impact.revision);
+    changed(before);
+  } catch (const std::exception& e) {
+    error(e);
+  }
+}
+void AdminDialog::changed(std::uint64_t before) {
+  if (before != project_.revision() && change_handler_) change_handler_();
+  refresh();
+  status_->setText("Изменения применены");
+}
+void AdminDialog::error(const std::exception& e) {
+  status_->setText(QString::fromUtf8(e.what()));
+  effective();
+}

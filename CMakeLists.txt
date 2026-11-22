@@ -8,11 +8,17 @@ set(CMAKE_CXX_EXTENSIONS OFF)
 set(CMAKE_EXPORT_COMPILE_COMMANDS ON)
 
 add_library(vfs_core STATIC
+    Core/Project/ProjectCodec.cpp
+    Core/Authorization/AuthorizationService.cpp
+    Core/Authorization/AuthorizationGraph.cpp
+    Core/Project/ProjectAdministration.cpp
+    Core/Project/ProjectNavigation.cpp
+    Core/Authorization/AdminGrantStore.cpp
+    Core/Project/ProjectState.cpp
+    Core/Project/ProjectService.cpp
     Core/VirtualFileSystem/VirtualFileSystem.cpp
-    Core/VirtualFileSystem/VirtualFileSystemLoad.cpp
     Core/VirtualFileSystem/FileNameIndex.cpp
     Core/VirtualFileSystem/UserManager.cpp
-    Core/VirtualFileSystem/UserManagerLoad.cpp
 )
 
 target_include_directories(vfs_core PUBLIC
@@ -36,7 +42,9 @@ add_library(vfs_gui_widgets STATIC
     App/Gui/VfsTreeModel.cpp
     App/Gui/MainWindow.cpp
     App/Gui/AccountListModel.cpp
-    App/Gui/GroupPolicyModel.cpp
+    App/Gui/AccessRuleModel.cpp
+    App/Gui/AdminGrantModel.cpp
+    App/Gui/AdminAccounts.cpp
     App/Gui/AdminDialog.cpp
     App/Gui/UserChoiceModel.cpp
     App/Gui/FileIconDialog.cpp

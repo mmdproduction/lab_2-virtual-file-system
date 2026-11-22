@@ -1,11 +1,12 @@
 #pragma once
 #include <QUrl>
 #include <functional>
-#include "VirtualFileSystem/VirtualFileSystem.hpp"
+
+#include "Project/ProjectService.hpp"
 
 class FileOpener {
-public:
-    using Launcher = std::function<bool(const QUrl&)>;
-    static void open(const VirtualFileSystem& vfs, NodeId id, const User& user,
-                     const Launcher& launcher = {});
+ public:
+  using Launcher = std::function<bool(const QUrl&)>;
+  static void open(const ProjectService& vfs, NodeId id, UserId user,
+                   const Launcher& launcher = {});
 };
