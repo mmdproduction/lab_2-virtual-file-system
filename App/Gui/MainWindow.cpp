@@ -1,3 +1,4 @@
+#include "GuidQt.hpp"
 #include "MainWindow.hpp"
 
 #include <QAbstractItemView>

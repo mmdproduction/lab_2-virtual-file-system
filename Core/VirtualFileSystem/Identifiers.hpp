@@ -1,12 +1,12 @@
 #pragma once
-#include <cstdint>
-using NodeId = std::uint64_t;
-using UserId = std::uint64_t;
-using GroupId = std::uint64_t;
-using AdminGrantId = std::uint64_t;
-using AccessRuleId = std::uint64_t;
-inline constexpr NodeId kInvalidNodeId = 0;
-inline constexpr UserId kInvalidUserId = 0;
-inline constexpr GroupId kInvalidGroupId = 0;
-inline constexpr AdminGrantId kInvalidAdminGrantId = 0;
-inline constexpr AccessRuleId kInvalidAccessRuleId = 0;
+#include "Common/Guid.hpp"
+using NodeId = Guid;
+using UserId = Guid;
+using GroupId = Guid;
+using AdminGrantId = Guid;
+using AccessRuleId = Guid;
+inline constexpr NodeId kInvalidNodeId{};
+inline constexpr UserId kInvalidUserId{};
+inline constexpr GroupId kInvalidGroupId{};
+inline constexpr AdminGrantId kInvalidAdminGrantId{};
+inline constexpr AccessRuleId kInvalidAccessRuleId{};

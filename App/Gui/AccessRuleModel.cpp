@@ -1,3 +1,4 @@
+#include "GuidQt.hpp"
 #include "AccessRuleModel.hpp"
 
 #include "PermissionLabels.hpp"
@@ -34,10 +35,12 @@ QVariant AccessRuleModel::data(const QModelIndex& i, int role) const {
   auto v = row(i.row());
   if (!v) return {};
   const auto& r = v->rule;
-  if (role == Qt::UserRole) return QVariant::fromValue<qulonglong>(r.id);
+  if (role == Qt::UserRole) return QVariant::fromValue(r.id);
   if (role == Qt::ToolTipRole)
     return QString::fromStdString(v->reason) +
-           QString(" · источник #%1").arg(r.source_grant_id);
+           QString("\nПравило: %1\nПолучатель: %2\nАвтор: %3\nИсточник: %4\nУзел: %5")
+               .arg(GuidText(r.id), GuidText(r.principal.id), GuidText(r.issuer_id),
+                    GuidText(r.source_grant_id), GuidText(v->origin));
   if (role != Qt::DisplayRole) return {};
   switch (i.column()) {
     case 0:
@@ -47,7 +50,7 @@ QVariant AccessRuleModel::data(const QModelIndex& i, int role) const {
              QString::fromStdString(r.principal.kind == PrincipalKind::User
                                         ? project_.user(r.principal.id).name
                                         : project_.group(r.principal.id).name) +
-             QString(" · #%1").arg(r.principal.id);
+             QString(" · #%1").arg(GuidLabel(r.principal.id));
     case 1:
       return DecisionLabel(r.read) +
              (!v->allow_active && r.read == PermissionDecision::Allow
@@ -57,7 +60,7 @@ QVariant AccessRuleModel::data(const QModelIndex& i, int role) const {
              (!v->allow_active && r.write == PermissionDecision::Allow
                   ? QString(" (не действует)") : QString());
     case 3:
-      return v->inherited ? QString("Унаследовано · #%1").arg(v->origin)
+      return v->inherited ? QString("Унаследовано · #%1").arg(GuidLabel(v->origin))
                           : QString("Здесь");
     case 4:
       return QString::fromStdString(project_.user(r.issuer_id).name);

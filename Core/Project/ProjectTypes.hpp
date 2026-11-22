@@ -11,17 +11,17 @@ struct NodeAccess {
   bool read = false, write = false, navigate = false;
 };
 struct NodeInfo {
-  NodeId id = 0, parent_id = 0;
+  NodeId id = {}, parent_id = {};
   FSType type = FSType::Folder;
   std::string name;
   FileIcon file_icon = FileIcon::Default;
   bool navigation_only = false;
 };
 struct GrantRequest {
-  UserId subject_id = 0;
-  NodeId scope_node_id = 0;
+  UserId subject_id = {};
+  NodeId scope_node_id = {};
   std::uint8_t capabilities = 0;
-  AdminGrantId source_grant_id = 0;
+  AdminGrantId source_grant_id = {};
 };
 struct RuleRequest {
   Principal principal;
@@ -35,7 +35,7 @@ struct ChangeImpact {
 };
 struct RuleView {
   AccessRule rule;
-  NodeId origin = 0;
+  NodeId origin = {};
   bool inherited = false, editable = false;
   std::string reason;
   bool allow_active = true;

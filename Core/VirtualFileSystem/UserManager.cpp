@@ -20,13 +20,12 @@ UserManager::UserManager(std::unique_ptr<UserDictionary> users,
   }
 
   User admin;
-  admin.id = next_user_id_;
+  admin.id = GenerateGuid();
   admin.name = "admin";
   admin.role = UserRole::SuperAdmin;
 
   users_->add(admin.id, admin);
   admin_id_ = admin.id;
-  ++next_user_id_;
 }
 
 UserId UserManager::admin_id() const noexcept { return admin_id_; }
@@ -73,16 +72,12 @@ UserId UserManager::create_user(const std::string& name) {
   if (name.empty()) {
     throw std::invalid_argument("User name must not be empty");
   }
-  if (next_user_id_ == kInvalidUserId) {
-    throw std::overflow_error("User IDs exhausted");
-  }
 
   User user;
-  user.id = next_user_id_;
+  user.id = GenerateUniqueGuid([&](Guid id) { return users_->contains_key(id); });
   user.name = name;
 
   users_->add(user.id, user);
-  ++next_user_id_;
   return user.id;
 }
 
@@ -90,16 +85,12 @@ GroupId UserManager::create_group(const std::string& name) {
   if (name.empty()) {
     throw std::invalid_argument("Group name must not be empty");
   }
-  if (next_group_id_ == kInvalidGroupId) {
-    throw std::overflow_error("Group IDs exhausted");
-  }
 
   Group group;
-  group.id = next_group_id_;
+  group.id = GenerateUniqueGuid([&](Guid id) { return groups_->contains_key(id); });
   group.name = name;
 
   groups_->add(group.id, group);
-  ++next_group_id_;
   return group.id;
 }
 

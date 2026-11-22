@@ -1,3 +1,4 @@
+#include "GuidQt.hpp"
 #include "SearchDialog.hpp"
 
 #include <QHBoxLayout>

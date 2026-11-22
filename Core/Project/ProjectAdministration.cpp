@@ -35,13 +35,13 @@ AdminGrantId ProjectService::grant_admin(const GrantRequest& r, UserId a) {
       throw AccessDenied(
           "Cannot delegate a union or a larger set of capabilities");
   }
-  if (!state_->grants.next_id_)
-    throw std::overflow_error("Grant IDs exhausted");
+  auto id = GenerateUniqueGuid([&](Guid candidate) {
+    return state_->grants.grants_->contains_key(candidate);
+  });
   AdminGrant g{
-      state_->grants.next_id_, r.subject_id, r.scope_node_id, r.capabilities, a,
+      id, r.subject_id, r.scope_node_id, r.capabilities, a,
       r.source_grant_id};
   state_->grants.grants_->add(g.id, g);
-  ++state_->grants.next_id_;
   ++state_->revision;
   return g.id;
 }
@@ -136,10 +136,9 @@ AccessRuleId ProjectService::upsert_rule(NodeId node_id, AccessRuleId id,
     if (!auth.can_edit(node_id, old.get(position), a))
       throw AccessDenied(
           "This rule belongs to a higher or equal administrator");
-  } else if (!state_->next_rule_id)
-    throw std::overflow_error("Rule IDs exhausted");
+  }
   AccessRule value{
-      id ? id : state_->next_rule_id, r.principal, r.read, r.write, a, source};
+      id ? id : state_->new_rule_id(), r.principal, r.read, r.write, a, source};
   if (id) {
     const auto& v = old.get(position);
     if (v.principal == value.principal && v.read == value.read &&
@@ -153,7 +152,6 @@ AccessRuleId ProjectService::upsert_rule(NodeId node_id, AccessRuleId id,
   else
     prepared.append(value);
   state_->vfs.nodes_->get(node_id).access_policy.rules.swap(prepared);
-  if (!id) ++state_->next_rule_id;
   ++state_->revision;
   return value.id;
 }

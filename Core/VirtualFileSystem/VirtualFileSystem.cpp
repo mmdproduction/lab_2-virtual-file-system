@@ -24,7 +24,7 @@ VirtualFileSystem::VirtualFileSystem(
   }
 
   FSNode root;
-  root.id = next_id_;
+  root.id = GenerateGuid();
   root.type = FSType::Folder;
   root.name = "/";
   root.parent_id = kInvalidNodeId;
@@ -33,7 +33,6 @@ VirtualFileSystem::VirtualFileSystem(
   nodes_->add(root.id, root);
 
   root_id_ = root.id;
-  ++next_id_;
 }
 
 NodeId VirtualFileSystem::root_id() const noexcept { return root_id_; }
@@ -64,12 +63,9 @@ NodeId VirtualFileSystem::create_directory(NodeId parent_id,
     }
   }
 
-  if (next_id_ == kInvalidNodeId) {
-    throw std::overflow_error("node ID space exhausted");
-  }
 
   FSNode directory;
-  directory.id = next_id_;
+  directory.id = GenerateUniqueGuid([&](Guid id) { return nodes_->contains_key(id); });
   directory.type = FSType::Folder;
   directory.name = name;
   directory.parent_id = parent_id;
@@ -86,7 +82,6 @@ NodeId VirtualFileSystem::create_directory(NodeId parent_id,
     throw;
   }
 
-  ++next_id_;
   return directory.id;
 }
 
@@ -117,12 +112,9 @@ NodeId VirtualFileSystem::attach_file(NodeId parent_id, const std::string& name,
         "physical path must point to an existing regular file");
   }
 
-  if (next_id_ == kInvalidNodeId) {
-    throw std::overflow_error("node ID space exhausted");
-  }
 
   FSNode file;
-  file.id = next_id_;
+  file.id = GenerateUniqueGuid([&](Guid id) { return nodes_->contains_key(id); });
   file.type = FSType::File;
   file.name = name;
   file.parent_id = parent_id;
@@ -144,7 +136,6 @@ NodeId VirtualFileSystem::attach_file(NodeId parent_id, const std::string& name,
     throw;
   }
 
-  ++next_id_;
   return file.id;
 }
 

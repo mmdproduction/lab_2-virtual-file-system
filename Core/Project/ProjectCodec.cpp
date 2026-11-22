@@ -1,6 +1,7 @@
 #include "ProjectCodec.hpp"
 
 #include <charconv>
+#include <algorithm>
 #include <iomanip>
 #include <limits>
 #include <locale>
@@ -77,9 +78,8 @@ std::string ProjectCodec::encode(const ProjectService& p) {
     out->imbue(std::locale::classic());
     out->exceptions(std::ios::badbit | std::ios::failbit);
   }
-  users << "USER_MANAGER 2\nSUPERADMIN " << s.users.admin_id_
-        << "\nNEXT_USER_ID " << s.users.next_user_id_ << "\nNEXT_GROUP_ID "
-        << s.users.next_group_id_ << "\nGROUPS " << s.users.groups_->size()
+  users << "USER_MANAGER 3\nSUPERADMIN " << s.users.admin_id_
+        << "\nGROUPS " << s.users.groups_->size()
         << '\n';
   s.users.groups_->for_each([&](auto id, const Group& g) {
     users << "GROUP " << id << ' ' << std::quoted(g.name) << '\n';
@@ -93,8 +93,7 @@ std::string ProjectCodec::encode(const ProjectService& p) {
       users << ' ' << u.group_ids.get(i);
     users << '\n';
   });
-  vfs << "VFS 4\nROOT " << s.vfs.root_id_ << "\nNEXT_ID " << s.vfs.next_id_
-      << "\nNODES " << s.vfs.nodes_->size() << '\n';
+  vfs << "VFS 5\nROOT " << s.vfs.root_id_ << "\nNODES " << s.vfs.nodes_->size() << '\n';
   ArraySequence<NodeId> ids;
   ids.append(s.vfs.root_id_);
   for (std::size_t i = 0; i < ids.size(); ++i) {
@@ -123,15 +122,14 @@ std::string ProjectCodec::encode(const ProjectService& p) {
           vfs << ' ' << bucket.get(j);
         vfs << '\n';
       });
-  auth << "AUTHORIZATION 1\nNEXT_GRANT_ID " << s.grants.next_id_
-       << "\nNEXT_RULE_ID " << s.next_rule_id << "\nGRANTS "
+  auth << "AUTHORIZATION 2\nGRANTS "
        << s.grants.grants_->size() << '\n';
   s.grants.grants_->for_each([&](auto id, const AdminGrant& g) {
     auth << "GRANT " << id << ' ' << g.subject_id << ' ' << g.scope_node_id
          << ' ' << static_cast<unsigned>(g.capabilities) << ' ' << g.issuer_id
          << ' ' << g.parent_grant_id << '\n';
   });
-  auto result = "VFS_PROJECT 2\n" + Block("USERS", users.str()) +
+  auto result = "VFS_PROJECT 3\n" + Block("USERS", users.str()) +
                 Block("VFS", vfs.str()) + Block("AUTH", auth.str());
   if (result.size() > kMaxBytes)
     throw std::length_error("Project exceeds 64 MiB");
@@ -143,33 +141,50 @@ std::unique_ptr<ProjectService> ProjectCodec::decode(const std::string& bytes) {
   Reader envelope(bytes);
   envelope.expect("VFS_PROJECT");
   auto version = envelope.number();
-  if (version != 1 && version != 2)
+  if (version != 1 && version != 2 && version != 3)
     throw std::runtime_error("Unsupported project version");
   auto users_text = envelope.block("USERS"), vfs_text = envelope.block("VFS");
   std::string auth_text;
-  if (version == 2) auth_text = envelope.block("AUTH");
+  if (version >= 2) auth_text = envelope.block("AUTH");
   envelope.end();
   auto project = std::make_unique<ProjectService>();
   auto& s = *project->state_;
   s.users.users_->clear();
   s.vfs.nodes_->clear();
-  s.migrated = version == 1;
+  s.migrated = version < 3;
+  enum Kind { UserKey, GroupKey, NodeKey, GrantKey, RuleKey };
+  AvlDictionary<std::uint64_t, Guid> legacy_maps[5];
+  AvlDictionary<Guid, bool> generated;
+  std::uint64_t maximum[5]{}, next[5]{};
+  auto read_id = [&](Reader& input, Kind kind, bool definition = false) {
+    if (version == 3) return GuidFromString(input.token());
+    auto raw = input.number();
+    if (definition) maximum[kind] = std::max(maximum[kind], raw);
+    if (!raw) return Guid{};
+    auto& map = legacy_maps[kind];
+    if (!map.contains_key(raw)) {
+      auto id = GenerateUniqueGuid([&](Guid value) { return generated.contains_key(value); });
+      generated.add(id, true);
+      map.add(raw, id);
+    }
+    return map.get(raw);
+  };
   Reader users(users_text);
   users.expect("USER_MANAGER");
   if (users.number() != version)
     throw std::runtime_error("Mismatched registry version");
   users.expect(version == 1 ? "ADMIN" : "SUPERADMIN");
-  s.users.admin_id_ = users.number();
-  users.expect("NEXT_USER_ID");
-  s.users.next_user_id_ = users.number();
-  users.expect("NEXT_GROUP_ID");
-  s.users.next_group_id_ = users.number();
+  s.users.admin_id_ = read_id(users, UserKey);
+  if (version < 3) {
+    users.expect("NEXT_USER_ID"); next[UserKey] = users.number();
+    users.expect("NEXT_GROUP_ID"); next[GroupKey] = users.number();
+  }
   users.expect("GROUPS");
   auto ng = users.count();
   for (std::size_t i = 0; i < ng; ++i) {
     users.expect("GROUP");
     Group g;
-    g.id = users.number();
+    g.id = read_id(users, GroupKey, true);
     g.name = users.quoted();
     s.users.groups_->add(g.id, g);
   }
@@ -179,7 +194,7 @@ std::unique_ptr<ProjectService> ProjectCodec::decode(const std::string& bytes) {
   for (std::size_t i = 0; i < nu; ++i) {
     users.expect("USER");
     User u;
-    u.id = users.number();
+    u.id = read_id(users, UserKey, true);
     u.name = users.quoted();
     if (version == 1) {
       bool admin = users.flag();
@@ -193,30 +208,29 @@ std::unique_ptr<ProjectService> ProjectCodec::decode(const std::string& bytes) {
       u.admin_level = static_cast<std::uint16_t>(users.bounded(255));
     }
     auto groups = users.count();
-    for (std::size_t j = 0; j < groups; ++j) u.group_ids.append(users.number());
+    for (std::size_t j = 0; j < groups; ++j) u.group_ids.append(read_id(users, GroupKey));
     s.users.users_->add(u.id, u);
   }
   users.end();
   Reader vfs(vfs_text);
   vfs.expect("VFS");
   auto vv = vfs.number();
-  if ((version == 1 && (vv < 1 || vv > 3)) || (version == 2 && vv != 4))
+  if ((version == 1 && (vv < 1 || vv > 3)) || (version == 2 && vv != 4) || (version == 3 && vv != 5))
     throw std::runtime_error("Mismatched VFS version");
   vfs.expect("ROOT");
-  s.vfs.root_id_ = vfs.number();
-  vfs.expect("NEXT_ID");
-  s.vfs.next_id_ = vfs.number();
+  s.vfs.root_id_ = read_id(vfs, NodeKey);
+  if (version < 3) { vfs.expect("NEXT_ID"); next[NodeKey] = vfs.number(); }
   vfs.expect("NODES");
   auto nn = vfs.count();
   ArraySequence<NodeId> records;
   for (std::size_t i = 0; i < nn; ++i) {
     FSNode n;
-    n.id = vfs.number();
+    n.id = read_id(vfs, NodeKey, true);
     auto type = vfs.token();
     if (type != "F" && type != "D")
       throw std::runtime_error("Invalid node type");
     n.type = type == "F" ? FSType::File : FSType::Folder;
-    n.parent_id = vfs.number();
+    n.parent_id = read_id(vfs, NodeKey);
     n.name = vfs.quoted();
     n.physical_path = vfs.quoted();
     n.access_policy.inherit_from_parent = n.id != s.vfs.root_id_;
@@ -229,8 +243,9 @@ std::unique_ptr<ProjectService> ProjectCodec::decode(const std::string& bytes) {
         vfs.expect("RULE");
         AccessRule r;
         if (vv < 4) {
-          r.id = s.next_rule_id++;
-          r.principal = {PrincipalKind::Group, vfs.number()};
+          r.id = GenerateUniqueGuid([&](Guid value) { return generated.contains_key(value); });
+          generated.add(r.id, true);
+          r.principal = {PrincipalKind::Group, read_id(vfs, GroupKey)};
           legacy_groups.add(r.principal.id, true);
           r.read = vfs.flag() ? PermissionDecision::Allow
                               : PermissionDecision::Unset;
@@ -238,13 +253,13 @@ std::unique_ptr<ProjectService> ProjectCodec::decode(const std::string& bytes) {
                                : PermissionDecision::Unset;
           r.issuer_id = s.users.admin_id_;
         } else {
-          r.id = vfs.number();
+          r.id = read_id(vfs, RuleKey, true);
           r.principal.kind = static_cast<PrincipalKind>(vfs.bounded(1));
-          r.principal.id = vfs.number();
+          r.principal.id = read_id(vfs, r.principal.kind == PrincipalKind::User ? UserKey : GroupKey);
           r.read = static_cast<PermissionDecision>(vfs.bounded(2));
           r.write = static_cast<PermissionDecision>(vfs.bounded(2));
-          r.issuer_id = vfs.number();
-          r.source_grant_id = vfs.number();
+          r.issuer_id = read_id(vfs, UserKey);
+          r.source_grant_id = read_id(vfs, GrantKey);
         }
         n.access_policy.rules.append(r);
       }
@@ -256,7 +271,7 @@ std::unique_ptr<ProjectService> ProjectCodec::decode(const std::string& bytes) {
     s.vfs.nodes_->add(n.id, n);
     records.append(n.id);
   }
-  if (vv == 4) {
+  if (vv >= 4) {
     vfs.expect("INDEX");
     auto count = vfs.count();
     for (std::size_t i = 0; i < count; ++i) {
@@ -264,7 +279,7 @@ std::unique_ptr<ProjectService> ProjectCodec::decode(const std::string& bytes) {
       auto name = vfs.quoted();
       auto n = vfs.count();
       ArraySequence<NodeId> bucket;
-      for (std::size_t j = 0; j < n; ++j) bucket.append(vfs.number());
+      for (std::size_t j = 0; j < n; ++j) bucket.append(read_id(vfs, NodeKey));
       s.vfs.file_index_.dictionary_->add(name, bucket);
     }
   }
@@ -280,36 +295,41 @@ std::unique_ptr<ProjectService> ProjectCodec::decode(const std::string& bytes) {
     }
     if (vv < 4 && n.type == FSType::File) s.vfs.file_index_.add(n.name, n.id);
   }
-  if (version == 2) {
+  if (version >= 2) {
     Reader auth(auth_text);
     auth.expect("AUTHORIZATION");
-    if (auth.number() != 1)
+    if (auth.number() != (version == 3 ? 2U : 1U))
       throw std::runtime_error("Unknown authorization version");
-    auth.expect("NEXT_GRANT_ID");
-    s.grants.next_id_ = auth.number();
-    auth.expect("NEXT_RULE_ID");
-    s.next_rule_id = auth.number();
+    if (version < 3) {
+      auth.expect("NEXT_GRANT_ID"); next[GrantKey] = auth.number();
+      auth.expect("NEXT_RULE_ID"); next[RuleKey] = auth.number();
+    }
     auth.expect("GRANTS");
     auto count = auth.count();
     for (std::size_t i = 0; i < count; ++i) {
       auth.expect("GRANT");
       AdminGrant g;
-      g.id = auth.number();
-      g.subject_id = auth.number();
-      g.scope_node_id = auth.number();
+      g.id = read_id(auth, GrantKey, true);
+      g.subject_id = read_id(auth, UserKey);
+      g.scope_node_id = read_id(auth, NodeKey);
       g.capabilities = static_cast<std::uint8_t>(auth.bounded(15));
-      g.issuer_id = auth.number();
-      g.parent_grant_id = auth.number();
+      g.issuer_id = read_id(auth, UserKey);
+      g.parent_grant_id = read_id(auth, GrantKey);
       s.grants.grants_->add(g.id, g);
     }
     auth.end();
   } else
     for (std::size_t i = 0; i < old_admins.size(); ++i) {
-      AdminGrant g{s.grants.next_id_++, old_admins.get(i),
-                   s.vfs.root_id_,      7,
-                   s.users.admin_id_,   0};
+      AdminGrant g{GenerateUniqueGuid([&](Guid id) { return s.grants.grants_->contains_key(id); }),
+                   old_admins.get(i), s.vfs.root_id_, 7, s.users.admin_id_, {}};
       s.grants.grants_->add(g.id, g);
     }
+  if (version < 3) {
+    const unsigned limit = version == 1 ? 3 : 5;
+    for (unsigned k = 0; k < limit; ++k)
+      if (next[k] && next[k] <= maximum[k])
+        throw std::invalid_argument("Legacy counter reuses ID");
+  }
   AuthorizationGraph::validate(s);
   return project;
 }

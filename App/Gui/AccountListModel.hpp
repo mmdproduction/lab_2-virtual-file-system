@@ -17,8 +17,8 @@ class AccountListModel : public QAbstractListModel {
   bool setData(const QModelIndex& index, const QVariant& value,
                int role) override;
   void reload();
-  std::uint64_t id_at(const QModelIndex& index) const;
-  QModelIndex index_for_id(std::uint64_t id) const;
+  Guid id_at(const QModelIndex& index) const;
+  QModelIndex index_for_id(Guid id) const;
   void set_selected_user(UserId id);
   void set_error_handler(std::function<void(const QString&)> handler);
   void set_change_handler(std::function<void()> handler);
@@ -29,7 +29,7 @@ class AccountListModel : public QAbstractListModel {
   UserId actor_id_;
   Kind kind_;
   UserId selected_user_ = kInvalidUserId;
-  ArraySequence<std::uint64_t> ids_;
+  ArraySequence<Guid> ids_;
   std::function<void(const QString&)> error_handler_;
   std::function<void()> change_handler_;
 };

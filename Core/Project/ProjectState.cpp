@@ -15,8 +15,6 @@ std::unique_ptr<ProjectState> ProjectState::clone() const {
   users.groups_->for_each(
       [&](auto k, const auto& v) { c->users.groups_->add(k, v); });
   c->users.admin_id_ = users.admin_id_;
-  c->users.next_user_id_ = users.next_user_id_;
-  c->users.next_group_id_ = users.next_group_id_;
   c->vfs.nodes_->clear();
   vfs.nodes_->for_each(
       [&](auto k, const auto& v) { c->vfs.nodes_->add(k, v); });
@@ -24,11 +22,8 @@ std::unique_ptr<ProjectState> ProjectState::clone() const {
     c->vfs.file_index_.dictionary_->add(k, v);
   });
   c->vfs.root_id_ = vfs.root_id_;
-  c->vfs.next_id_ = vfs.next_id_;
   grants.grants_->for_each(
       [&](auto k, const auto& v) { c->grants.grants_->add(k, v); });
-  c->grants.next_id_ = grants.next_id_;
-  c->next_rule_id = next_rule_id;
   c->revision = revision;
   c->migrated = migrated;
   return c;
@@ -75,4 +70,15 @@ std::pair<NodeId, AccessRule> ProjectState::rule(AccessRuleId id) const {
   });
   if (!out.first) throw std::out_of_range("Unknown rule");
   return out;
+}
+
+AccessRuleId ProjectState::new_rule_id() const {
+  return GenerateUniqueGuid([&](Guid id) {
+    bool found = false;
+    vfs.nodes_->for_each([&](auto, const FSNode& n) {
+      for (std::size_t i = 0; i < n.access_policy.rules.size(); ++i)
+        found |= n.access_policy.rules.get(i).id == id;
+    });
+    return found;
+  });
 }

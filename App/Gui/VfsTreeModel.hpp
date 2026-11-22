@@ -1,4 +1,6 @@
 #pragma once
+#include "GuidQt.hpp"
+#include "Dictionary/AVLDictionary.hpp"
 
 #include <QAbstractItemModel>
 #include <QByteArray>
@@ -53,6 +55,10 @@ class VfsTreeModel : public QAbstractItemModel {
 
   bool is_visible(NodeId id) const;
   ArraySequence<NodeId> visible_children(const NodeInfo& parent) const;
+  quintptr handle_for(NodeId) const;
+  void clear_handles();
+  mutable ArraySequence<NodeId> index_ids_;
+  mutable AvlDictionary<NodeId, quintptr> index_handles_;
   NodeId dragged_node(const QMimeData* data) const;
   bool can_move(NodeId id, NodeId destination) const;
 

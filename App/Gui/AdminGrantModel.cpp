@@ -1,3 +1,4 @@
+#include "GuidQt.hpp"
 #include "AdminGrantModel.hpp"
 
 #include "PermissionLabels.hpp"
@@ -26,25 +27,29 @@ QVariant AdminGrantModel::data(const QModelIndex& i, int role) const {
     return {};
   auto g = row(i.row());
   if (!g) return {};
-  if (role == Qt::UserRole) return QVariant::fromValue<qulonglong>(g->id);
+  if (role == Qt::UserRole) return QVariant::fromValue(g->id);
+  if (role == Qt::ToolTipRole)
+    return QString("Назначение: %1\nПолучатель: %2\nОбласть: %3\nАвтор: %4\nИсточник: %5")
+        .arg(GuidText(g->id), GuidText(g->subject_id), GuidText(g->scope_node_id),
+             GuidText(g->issuer_id), GuidText(g->parent_grant_id));
   if (role != Qt::DisplayRole) return {};
   switch (i.column()) {
     case 0:
       return QString::fromStdString(project_.user(g->subject_id).name) +
-             QString(" · #%1").arg(g->subject_id);
+             QString(" · #%1").arg(GuidLabel(g->subject_id));
     case 1:
       try {
         return QString::fromStdString(
             project_.administrative_path(g->scope_node_id, actor_));
       } catch (const std::exception&) {
-        return QString("#%1").arg(g->scope_node_id);
+        return QString("#%1").arg(GuidLabel(g->scope_node_id));
       }
     case 2:
       return CapabilityLabel(g->capabilities);
     case 3:
       return QString::fromStdString(project_.user(g->issuer_id).name);
     case 4:
-      return g->parent_grant_id ? QString("#%1").arg(g->parent_grant_id)
+      return g->parent_grant_id ? QString("#%1").arg(GuidLabel(g->parent_grant_id))
                                 : QString("Суперадминистратор");
     default:
       return {};

@@ -11,7 +11,6 @@ class AdminGrantStore {
   friend class AuthorizationGraph;
   friend class ProjectCodec;
   std::unique_ptr<IDictionary<AdminGrantId, AdminGrant>> grants_;
-  AdminGrantId next_id_ = 1;
 
  public:
   AdminGrantStore();

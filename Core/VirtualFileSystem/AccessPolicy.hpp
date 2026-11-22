@@ -6,12 +6,12 @@ struct AccessRights {
   bool write = false;
 };
 struct AccessRule {
-  AccessRuleId id = 0;
+  AccessRuleId id = {};
   Principal principal;
   PermissionDecision read = PermissionDecision::Unset;
   PermissionDecision write = PermissionDecision::Unset;
-  UserId issuer_id = 0;
-  AdminGrantId source_grant_id = 0;
+  UserId issuer_id = {};
+  AdminGrantId source_grant_id = {};
 };
 struct AccessPolicy {
   bool inherit_from_parent = true;

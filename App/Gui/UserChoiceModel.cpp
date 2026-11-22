@@ -1,3 +1,4 @@
+#include "GuidQt.hpp"
 #include "UserChoiceModel.hpp"
 
 #include <limits>
@@ -29,16 +30,21 @@ QVariant UserChoiceModel::data(const QModelIndex& index, int role) const {
       id_at(index.row()) == kInvalidUserId)
     return {};
   const User& user = users_.user(id_at(index.row()));
-  if (role == Qt::UserRole) return QVariant::fromValue<qulonglong>(user.id);
+  if (role == Qt::UserRole) return QVariant::fromValue(user.id);
+  if (role == Qt::ToolTipRole) return GuidText(user.id);
   if (role == Qt::DisplayRole)
     return QString("%1  ·  #%2")
         .arg(QString::fromStdString(user.name))
-        .arg(static_cast<qulonglong>(user.id));
+        .arg(GuidLabel(user.id));
   return {};
 }
 
 void UserChoiceModel::reload() {
-  auto ids = users_.user_ids();
+  auto all = users_.user_ids();
+  ArraySequence<UserId> ids;
+  ids.append(users_.superadmin_id());
+  for (std::size_t i = 0; i < all.size(); ++i)
+    if (all.get(i) != users_.superadmin_id()) ids.append(all.get(i));
   beginResetModel();
   ids_.swap(ids);
   endResetModel();

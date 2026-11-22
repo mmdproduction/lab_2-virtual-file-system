@@ -1,3 +1,4 @@
+#include "GuidQt.hpp"
 #include <QComboBox>
 #include <QFormLayout>
 #include <QHBoxLayout>
@@ -95,7 +96,7 @@ QWidget* AdminDialog::accounts_page() {
   connect(account_user_, &QComboBox::currentIndexChanged, this,
           [this] { account_details(); });
   connect(role_, &QComboBox::currentIndexChanged, this, [this] {
-    auto id = account_user_->currentData(Qt::UserRole).toULongLong();
+    auto id = account_user_->currentData(Qt::UserRole).value<Guid>();
     const bool admin = role_->currentIndex() == 1;
     level_->setEnabled(id != project_.superadmin_id() && admin);
     level_->setMinimum(admin ? 1 : 0);
@@ -121,8 +122,8 @@ void AdminDialog::reload_accounts() {
   for (std::size_t i = 0; i < groups.size(); ++i) {
     auto g = project_.group(groups.get(i));
     account_group_->addItem(
-        QString::fromStdString(g.name) + QString(" · #%1").arg(g.id),
-        QVariant::fromValue<qulonglong>(g.id));
+        QString::fromStdString(g.name) + QString(" · #%1").arg(GuidLabel(g.id)),
+        QVariant::fromValue(g.id));
   }
   auto at = account_group_->findData(keep);
   if (at >= 0) account_group_->setCurrentIndex(at);
@@ -169,7 +170,7 @@ void AdminDialog::create_account(bool group) {
   }
 }
 void AdminDialog::rename_account(bool group) {
-  auto id = group ? account_group_->currentData().toULongLong()
+  auto id = group ? account_group_->currentData().value<Guid>()
                   : account_users_->id_at(account_user_->currentIndex());
   if (!id) return;
   bool ok = false;

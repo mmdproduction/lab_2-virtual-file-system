@@ -1,3 +1,4 @@
+#include "GuidQt.hpp"
 #include "ProjectStore.hpp"
 
 #include <QDir>

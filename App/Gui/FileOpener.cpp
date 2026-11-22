@@ -1,3 +1,4 @@
+#include "GuidQt.hpp"
 #include "FileOpener.hpp"
 
 #include <QDesktopServices>

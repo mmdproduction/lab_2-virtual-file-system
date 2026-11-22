@@ -1,3 +1,4 @@
+#include "GuidQt.hpp"
 #include "FileIconDialog.hpp"
 
 #include <QButtonGroup>

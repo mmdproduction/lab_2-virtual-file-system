@@ -1,3 +1,4 @@
+#include "GuidQt.hpp"
 #include "FileSearchModel.hpp"
 
 #include <QIcon>
@@ -53,7 +54,7 @@ int FileSearchModel::columnCount(const QModelIndex& parent) const {
 QVariant FileSearchModel::data(const QModelIndex& index, int role) const {
   if (node_id(index) == kInvalidNodeId) return {};
   const auto& result = results_.get(static_cast<std::size_t>(index.row()));
-  if (role == Qt::UserRole) return QVariant::fromValue<qulonglong>(result.id);
+  if (role == Qt::UserRole) return QVariant::fromValue(result.id);
   if (role == Qt::ToolTipRole) return result.path;
   if (role == Qt::DisplayRole)
     return index.column() == 0 ? result.name : result.path;

@@ -8,6 +8,7 @@ set(CMAKE_CXX_EXTENSIONS OFF)
 set(CMAKE_EXPORT_COMPILE_COMMANDS ON)
 
 add_library(vfs_core STATIC
+    Core/Common/Guid.cpp
     Core/Project/ProjectCodec.cpp
     Core/Authorization/AuthorizationService.cpp
     Core/Authorization/AuthorizationGraph.cpp

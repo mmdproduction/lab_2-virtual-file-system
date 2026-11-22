@@ -14,8 +14,7 @@ class UserManager {
   friend class ProjectCodec;
   std::unique_ptr<UserDictionary> users_;
   std::unique_ptr<GroupDictionary> groups_;
-  UserId admin_id_ = 0, next_user_id_ = 1;
-  GroupId next_group_id_ = 1;
+  UserId admin_id_{};
   void rename_user(UserId, const std::string&);
   void rename_group(GroupId, const std::string&);
   UserId create_user(const std::string&);

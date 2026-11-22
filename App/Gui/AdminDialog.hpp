@@ -20,7 +20,7 @@ class AdminDialog : public QDialog {
   ProjectService& project_;
   NodeId node_id_;
   UserId actor_id_;
-  AccessRuleId editing_ = 0;
+  AccessRuleId editing_ = {};
   std::function<void()> change_handler_;
   QTreeWidget* scopes_;
   QTabWidget* tabs_;

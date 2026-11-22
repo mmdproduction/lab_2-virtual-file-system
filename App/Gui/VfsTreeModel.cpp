@@ -1,3 +1,4 @@
+#include "GuidQt.hpp"
 #include "VfsTreeModel.hpp"
 
 #include <QDataStream>
@@ -21,8 +22,7 @@ VfsTreeModel::VfsTreeModel(ProjectService& vfs, UserId user, QObject* parent)
       vfs_(vfs),
       user_(user),
       drag_token_(QUuid::createUuid().toRfc4122()) {
-  static_assert(sizeof(quintptr) >= sizeof(NodeId),
-                "This model requires a 64-bit Qt build");
+
 }
 
 std::optional<NodeInfo> VfsTreeModel::find_node(NodeId id) const {
@@ -53,10 +53,26 @@ ArraySequence<NodeId> VfsTreeModel::visible_children(
   return result;
 }
 
+quintptr VfsTreeModel::handle_for(NodeId id) const {
+  if (index_handles_.contains_key(id)) return index_handles_.get(id);
+  if (index_ids_.size() == std::numeric_limits<quintptr>::max())
+    throw std::length_error("Too many model handles");
+  const auto handle = static_cast<quintptr>(index_ids_.size() + 1);
+  // Prepare the lookup first; roll back if the sequence allocation fails.
+  index_handles_.add(id, handle);
+  try { index_ids_.append(id); }
+  catch (...) { index_handles_.remove(id); throw; }
+  return handle;
+}
+void VfsTreeModel::clear_handles() {
+  index_handles_.clear();
+  index_ids_.clear();
+}
 NodeId VfsTreeModel::node_id(const QModelIndex& index) const noexcept {
-  return index.isValid() && index.model() == this
-             ? static_cast<NodeId>(index.internalId())
-             : kInvalidNodeId;
+  if (!index.isValid() || index.model() != this) return {};
+  auto handle = index.internalId();
+  if (!handle || handle > index_ids_.size()) return {};
+  return index_ids_.get(static_cast<std::size_t>(handle - 1));
 }
 
 std::optional<NodeInfo> VfsTreeModel::node_for_index(
@@ -92,12 +108,12 @@ QModelIndex VfsTreeModel::index(int row, int column,
     if (!node) return {};
     id = visible_children(*node).get(static_cast<std::size_t>(row));
   }
-  return createIndex(row, column, static_cast<quintptr>(id));
+  return createIndex(row, column, handle_for(id));
 }
 
 QModelIndex VfsTreeModel::index_for_node(NodeId id) const {
   if (!is_visible(id)) return {};
-  if (id == vfs_.root_id()) return createIndex(0, 0, static_cast<quintptr>(id));
+  if (id == vfs_.root_id()) return createIndex(0, 0, handle_for(id));
   const auto node = find_node(id);
   const auto parent = find_node(node->parent_id);
   if (!parent) return {};
@@ -106,7 +122,7 @@ QModelIndex VfsTreeModel::index_for_node(NodeId id) const {
     if (children.get(row) == id) {
       if (row >= static_cast<std::size_t>(std::numeric_limits<int>::max()))
         return {};
-      return createIndex(static_cast<int>(row), 0, static_cast<quintptr>(id));
+      return createIndex(static_cast<int>(row), 0, handle_for(id));
     }
   }
   return {};
@@ -121,11 +137,11 @@ QModelIndex VfsTreeModel::parent(const QModelIndex& child) const {
 QVariant VfsTreeModel::data(const QModelIndex& index, int role) const {
   const auto node = node_for_index(index);
   if (!node) return {};
-  if (role == Qt::UserRole) return QVariant::fromValue<qulonglong>(node->id);
+  if (role == Qt::UserRole) return QVariant::fromValue(node->id);
   if (role == Qt::UserRole + 1) return static_cast<int>(node->file_icon);
   if (role == Qt::ToolTipRole)
     return QString("ID: %1\n%2")
-        .arg(static_cast<qulonglong>(node->id))
+        .arg(GuidText(node->id))
         .arg((node->type == FSType::File
                   ? QString::fromStdString(vfs_.physical_path(node->id, user_))
                   : QString()));
@@ -186,6 +202,7 @@ Qt::ItemFlags VfsTreeModel::flags(const QModelIndex& index) const {
 NodeId VfsTreeModel::create_directory(NodeId parent_id,
                                       const std::string& name) {
   beginResetModel();
+  clear_handles();
   NodeId id;
   try {
     id = vfs_.create_directory(parent_id, name, user_);
@@ -201,6 +218,7 @@ NodeId VfsTreeModel::create_directory(NodeId parent_id,
 NodeId VfsTreeModel::attach_file(NodeId parent_id, const std::string& name,
                                  const QString& path) {
   beginResetModel();
+  clear_handles();
   NodeId id;
   try {
     id = vfs_.attach_file(parent_id, name, path.toUtf8().toStdString(), user_);
@@ -237,12 +255,14 @@ NodeId VfsTreeModel::create_file(NodeId parent_id, const std::string& name,
 
 void VfsTreeModel::set_user(UserId user) {
   beginResetModel();
+  clear_handles();
   user_ = user;
   ++drag_epoch_;
   endResetModel();
 }
 void VfsTreeModel::refresh() {
   beginResetModel();
+  clear_handles();
   ++drag_epoch_;
   endResetModel();
 }
@@ -281,7 +301,7 @@ QMimeData* VfsTreeModel::mimeData(const QModelIndexList& indexes) const {
   QDataStream stream(&bytes, QIODevice::WriteOnly);
   stream.setVersion(QDataStream::Qt_6_0);
   stream.writeRawData(drag_token_.constData(), 16);
-  stream << drag_epoch_ << static_cast<quint64>(id)
+  stream << drag_epoch_ << static_cast<quint64>(id.high) << static_cast<quint64>(id.low)
          << static_cast<quint64>(vfs_.revision());
   auto* result = new QMimeData;
   result->setData(kNodeMime, bytes);
@@ -291,20 +311,20 @@ QMimeData* VfsTreeModel::mimeData(const QModelIndexList& indexes) const {
 NodeId VfsTreeModel::dragged_node(const QMimeData* data) const {
   if (!data || !data->hasFormat(kNodeMime)) return kInvalidNodeId;
   const QByteArray bytes = data->data(kNodeMime);
-  if (bytes.size() != 40) return kInvalidNodeId;
+  if (bytes.size() != 48) return kInvalidNodeId;
   QDataStream stream(bytes);
   stream.setVersion(QDataStream::Qt_6_0);
   char token[16];
   quint64 epoch = 0;
-  quint64 id = 0;
+  quint64 high = 0, low = 0;
   stream.readRawData(token, 16);
   quint64 revision = 0;
-  stream >> epoch >> id >> revision;
+  stream >> epoch >> high >> low >> revision;
   if (stream.status() != QDataStream::Ok ||
       QByteArray(token, 16) != drag_token_ || epoch != drag_epoch_ ||
       revision != vfs_.revision())
     return kInvalidNodeId;
-  return id;
+  return Guid{high, low};
 }
 
 bool VfsTreeModel::can_move(NodeId id, NodeId destination) const {
@@ -333,6 +353,7 @@ bool VfsTreeModel::dropMimeData(const QMimeData* data, Qt::DropAction action,
   const NodeId destination = node_id(parent);
   QString error;
   beginResetModel();
+  clear_handles();
   try {
     vfs_.move(id, destination, user_);
   } catch (const std::exception& e) {
@@ -351,6 +372,7 @@ bool VfsTreeModel::dropMimeData(const QMimeData* data, Qt::DropAction action,
 void VfsTreeModel::rename(NodeId id, const std::string& name) {
   auto before = vfs_.revision();
   beginResetModel();
+  clear_handles();
   try {
     vfs_.rename(id, name, user_);
   } catch (...) {
@@ -362,6 +384,7 @@ void VfsTreeModel::rename(NodeId id, const std::string& name) {
 }
 void VfsTreeModel::remove(NodeId id) {
   beginResetModel();
+  clear_handles();
   try {
     vfs_.remove(id, true, user_);
   } catch (...) {

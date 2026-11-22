@@ -1,3 +1,4 @@
+#include "GuidQt.hpp"
 #include "AccountListModel.hpp"
 
 #include <QSize>
@@ -26,11 +27,11 @@ int AccountListModel::rowCount(const QModelIndex& parent) const {
   return static_cast<int>(ids_.size() > maximum ? maximum : ids_.size());
 }
 
-std::uint64_t AccountListModel::id_at(const QModelIndex& index) const {
-  return valid(index) ? ids_.get(static_cast<std::size_t>(index.row())) : 0;
+Guid AccountListModel::id_at(const QModelIndex& index) const {
+  return valid(index) ? ids_.get(static_cast<std::size_t>(index.row())) : Guid{};
 }
 
-QModelIndex AccountListModel::index_for_id(std::uint64_t id) const {
+QModelIndex AccountListModel::index_for_id(Guid id) const {
   for (int row = 0; row < rowCount(); ++row) {
     if (ids_.get(static_cast<std::size_t>(row)) == id) return index(row, 0);
   }
@@ -40,7 +41,8 @@ QModelIndex AccountListModel::index_for_id(std::uint64_t id) const {
 QVariant AccountListModel::data(const QModelIndex& index, int role) const {
   if (!valid(index)) return {};
   const auto id = id_at(index);
-  if (role == Qt::UserRole) return QVariant::fromValue<qulonglong>(id);
+  if (role == Qt::UserRole) return QVariant::fromValue(id);
+  if (role == Qt::ToolTipRole) return GuidText(id);
   if (role == Qt::SizeHintRole) return QSize(180, 46);
   if (role == Qt::DecorationRole) {
     static const QIcon user = ui::LineIcon(ui::Icon::User);
@@ -52,10 +54,10 @@ QVariant AccountListModel::data(const QModelIndex& index, int role) const {
         kind_ == Kind::Users ? users_.user(id).name : users_.group(id).name;
     return QString("%1  ·  #%2")
         .arg(QString::fromStdString(name))
-        .arg(static_cast<qulonglong>(id));
+        .arg(GuidLabel(id));
   }
   if (role == Qt::CheckStateRole && kind_ == Kind::Groups &&
-      selected_user_ != 0) {
+      static_cast<bool>(selected_user_)) {
     const User& user = users_.user(selected_user_);
     for (std::size_t i = 0; i < user.group_ids.size(); ++i) {
       if (user.group_ids.get(i) == id) return Qt::Checked;
@@ -68,14 +70,14 @@ QVariant AccountListModel::data(const QModelIndex& index, int role) const {
 Qt::ItemFlags AccountListModel::flags(const QModelIndex& index) const {
   if (!valid(index)) return Qt::NoItemFlags;
   auto result = Qt::ItemIsEnabled | Qt::ItemIsSelectable;
-  if (kind_ == Kind::Groups && selected_user_ != 0)
+  if (kind_ == Kind::Groups && static_cast<bool>(selected_user_))
     result |= Qt::ItemIsUserCheckable;
   return result;
 }
 
 bool AccountListModel::setData(const QModelIndex& index, const QVariant& value,
                                int role) {
-  if (!valid(index) || kind_ != Kind::Groups || selected_user_ == 0 ||
+  if (!valid(index) || kind_ != Kind::Groups || !selected_user_ ||
       role != Qt::CheckStateRole ||
       (value.toInt() != Qt::Checked && value.toInt() != Qt::Unchecked))
     return false;

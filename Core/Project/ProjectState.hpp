@@ -8,7 +8,7 @@ class ProjectState {
   UserManager users;
   VirtualFileSystem vfs;
   AdminGrantStore grants;
-  AccessRuleId next_rule_id = 1;
+  AccessRuleId new_rule_id() const;
   std::uint64_t revision = 0;
   bool migrated = false;
   ProjectState();

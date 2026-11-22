@@ -13,16 +13,16 @@ enum class PermissionDecision : std::uint8_t { Unset, Allow, Deny };
 enum class PrincipalKind : std::uint8_t { User, Group };
 struct Principal {
   PrincipalKind kind = PrincipalKind::User;
-  std::uint64_t id = 0;
+  Guid id{};
   bool operator==(const Principal&) const = default;
 };
 struct AdminGrant {
-  AdminGrantId id = 0;
-  UserId subject_id = 0;
-  NodeId scope_node_id = 0;
+  AdminGrantId id = {};
+  UserId subject_id = {};
+  NodeId scope_node_id = {};
   std::uint8_t capabilities = 0;
-  UserId issuer_id = 0;
-  AdminGrantId parent_grant_id = 0;
+  UserId issuer_id = {};
+  AdminGrantId parent_grant_id = {};
 };
 inline bool HasCapability(std::uint8_t mask, AdminCapability capability) {
   return (mask & static_cast<std::uint8_t>(capability)) != 0;

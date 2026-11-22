@@ -34,7 +34,7 @@ bool AuthorizationService::grant_valid(const AdminGrant& g,
     if (subject.role != UserRole::Admin || !higher(g.issuer_id, g.subject_id) ||
         vfs_.get_node_unchecked(g.scope_node_id).type != FSType::Folder)
       return false;
-    if (issuer.role == UserRole::SuperAdmin) return g.parent_grant_id == 0;
+    if (issuer.role == UserRole::SuperAdmin) return g.parent_grant_id.is_nil();
     if (!g.parent_grant_id) return false;
     const auto& parent = grants_.get(g.parent_grant_id);
     return parent.subject_id == g.issuer_id && grant_valid(parent, depth + 1) &&
@@ -49,7 +49,7 @@ bool AuthorizationService::grant_valid(const AdminGrant& g,
 bool AuthorizationService::rule_valid(const AccessRule& r, NodeId node) const {
   try {
     const auto& author = users_.get_user(r.issuer_id);
-    if (author.role == UserRole::SuperAdmin) return r.source_grant_id == 0;
+    if (author.role == UserRole::SuperAdmin) return r.source_grant_id.is_nil();
     if (author.role != UserRole::Admin || !r.source_grant_id) return false;
     const auto& g = grants_.get(r.source_grant_id);
     return g.subject_id == r.issuer_id && grant_valid(g) &&

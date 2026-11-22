@@ -1,3 +1,4 @@
+#include "GuidQt.hpp"
 #include "AdminDialog.hpp"
 
 #include <QCheckBox>
@@ -197,7 +198,7 @@ AdminDialog::AdminDialog(ProjectService& p, NodeId id, UserId actor,
   connect(scopes_, &QTreeWidget::currentItemChanged, this,
           [this](QTreeWidgetItem* i) {
             if (i) {
-              node_id_ = i->data(0, Qt::UserRole).toULongLong();
+              node_id_ = i->data(0, Qt::UserRole).value<Guid>();
               refresh();
             }
           });
@@ -223,7 +224,7 @@ AdminDialog::AdminDialog(ProjectService& p, NodeId id, UserId actor,
     try {
       auto before = project_.revision();
       project_.set_inheritance(node_id_, inherit_->isChecked(), actor_id_,
-                               rule_source_->currentData().toULongLong());
+                               rule_source_->currentData().value<Guid>());
       changed(before);
     } catch (const std::exception& e) {
       error(e);
@@ -255,7 +256,7 @@ void AdminDialog::fill_tree() {
   scopes_->clear();
   auto* root = new QTreeWidgetItem(scopes_, QStringList("/"));
   root->setData(0, Qt::UserRole,
-                QVariant::fromValue<qulonglong>(project_.root_id()));
+                QVariant::fromValue(project_.root_id()));
   root->setData(0, Qt::UserRole + 1, true);
   std::function<void(QTreeWidgetItem*, NodeId)> append = [&](auto* parent,
                                                              NodeId id) {
@@ -265,7 +266,7 @@ void AdminDialog::fill_tree() {
         const auto& n = children.get(i);
         auto* item = new QTreeWidgetItem(
             parent, QStringList(QString::fromStdString(n.name)));
-        item->setData(0, Qt::UserRole, QVariant::fromValue<qulonglong>(n.id));
+        item->setData(0, Qt::UserRole, QVariant::fromValue(n.id));
         item->setData(0, Qt::UserRole + 1, n.type == FSType::Folder);
         item->setIcon(0,
                       ui::LineIcon(n.type == FSType::Folder ? ui::Icon::Folder
@@ -279,28 +280,28 @@ void AdminDialog::fill_tree() {
   scopes_->expandAll();
   QTreeWidgetItem* selected = root;
   for (QTreeWidgetItemIterator i(scopes_); *i; ++i)
-    if ((*i)->data(0, Qt::UserRole).toULongLong() == node_id_) {
+    if ((*i)->data(0, Qt::UserRole).value<Guid>() == node_id_) {
       selected = *i;
       break;
     }
   scopes_->setCurrentItem(selected);
-  node_id_ = selected->data(0, Qt::UserRole).toULongLong();
+  node_id_ = selected->data(0, Qt::UserRole).value<Guid>();
 }
 void AdminDialog::fill_sources(QComboBox* c, AdminCapability cap) {
   QSignalBlocker block(c);
   auto keep = c->currentData();
   c->clear();
   if (project_.user(actor_id_).role == UserRole::SuperAdmin)
-    c->addItem("Суперадминистратор", QVariant::fromValue<qulonglong>(0));
+    c->addItem("Суперадминистратор", QVariant::fromValue(Guid{}));
   else {
     auto gs = project_.admin_sources(node_id_, actor_id_, cap);
     for (std::size_t i = 0; i < gs.size(); ++i) {
       auto& g = gs.get(i);
       c->addItem(QString("#%1 · %2")
-                     .arg(g.id)
+                     .arg(GuidLabel(g.id))
                      .arg(QString::fromStdString(project_.administrative_path(
                          g.scope_node_id, actor_id_))),
-                 QVariant::fromValue<qulonglong>(g.id));
+                 QVariant::fromValue(g.id));
     }
   }
   auto at = c->findData(keep);
@@ -325,8 +326,8 @@ void AdminDialog::refresh() {
     for (std::size_t i = 0; i < ids.size(); ++i) {
       auto u = project_.user(ids.get(i));
       effective_user_->addItem(
-          QString::fromStdString(u.name) + QString(" · #%1").arg(u.id),
-          QVariant::fromValue<qulonglong>(u.id));
+          QString::fromStdString(u.name) + QString(" · #%1").arg(GuidLabel(u.id)),
+          QVariant::fromValue(u.id));
     }
     auto at = effective_user_->findData(keep);
     if (at >= 0) effective_user_->setCurrentIndex(at);
@@ -343,8 +344,8 @@ void AdminDialog::refresh() {
                                         actor.admin_level > u.admin_level))
         grant_user_->addItem(
             QString::fromStdString(u.name) +
-                QString(" · ур. %1 · #%2").arg(u.admin_level).arg(u.id),
-            QVariant::fromValue<qulonglong>(u.id));
+                QString(" · ур. %1 · #%2").arg(u.admin_level).arg(GuidLabel(u.id)),
+            QVariant::fromValue(u.id));
     }
     auto at = grant_user_->findData(keep);
     if (at >= 0) grant_user_->setCurrentIndex(at);
@@ -363,6 +364,7 @@ void AdminDialog::refresh() {
   grant_options();
   revoke_->setEnabled(false);
   effective();
+  for (auto* choices : findChildren<QComboBox*>()) GuidChoiceTooltips(choices);
 }
 void AdminDialog::fill_principals() {
   auto keep = principal_->currentData();
@@ -384,16 +386,18 @@ void AdminDialog::fill_principals() {
     QString text = QString::fromStdString(kind_->currentIndex() == 0
                                               ? project_.user(id).name
                                               : project_.group(id).name) +
-                   QString(" · #%1").arg(id);
-    if (text.contains(search_->text(), Qt::CaseInsensitive))
-      principal_->addItem(text, QVariant::fromValue<qulonglong>(id));
+                   QString(" · #%1").arg(GuidLabel(id));
+    if (text.contains(search_->text(), Qt::CaseInsensitive) ||
+        GuidText(id).contains(search_->text(), Qt::CaseInsensitive))
+      principal_->addItem(text, QVariant::fromValue(id));
   }
   auto at = principal_->findData(keep);
   if (at >= 0) principal_->setCurrentIndex(at);
   effective();
+  GuidChoiceTooltips(principal_);
 }
 void AdminDialog::new_rule() {
-  editing_ = 0;
+  editing_ = {};
   fill_principals();
   read_->setCurrentIndex(0);
   write_->setCurrentIndex(0);
@@ -418,19 +422,19 @@ void AdminDialog::select_rule() {
   kind_->setCurrentIndex(r.principal.kind == PrincipalKind::Group ? 1 : 0);
   fill_principals();
   auto selected =
-      principal_->findData(QVariant::fromValue<qulonglong>(r.principal.id));
+      principal_->findData(QVariant::fromValue(r.principal.id));
   if (selected < 0) {
     principal_->addItem(
         QString::fromStdString(r.principal.kind == PrincipalKind::User
                                    ? project_.user(r.principal.id).name
                                    : project_.group(r.principal.id).name),
-        QVariant::fromValue<qulonglong>(r.principal.id));
+        QVariant::fromValue(r.principal.id));
     selected = principal_->count() - 1;
   }
   principal_->setCurrentIndex(selected);
   if (r.issuer_id == actor_id_) {
     auto source = rule_source_->findData(
-        QVariant::fromValue<qulonglong>(r.source_grant_id));
+        QVariant::fromValue(r.source_grant_id));
     if (source >= 0) rule_source_->setCurrentIndex(source);
   }
   read_->setCurrentIndex(static_cast<int>(r.read));
@@ -445,7 +449,7 @@ void AdminDialog::select_rule() {
       QString("%1 · автор: %2 · источник: #%3")
           .arg(QString::fromStdString(view->reason),
                QString::fromStdString(project_.user(r.issuer_id).name))
-          .arg(r.source_grant_id));
+          .arg(GuidLabel(r.source_grant_id)));
 }
 void AdminDialog::apply_rule() {
   try {
@@ -456,10 +460,10 @@ void AdminDialog::apply_rule() {
         node_id_, editing_,
         {{kind_->currentIndex() == 0 ? PrincipalKind::User
                                      : PrincipalKind::Group,
-          principal_->currentData().toULongLong()},
+          principal_->currentData().value<Guid>()},
          static_cast<PermissionDecision>(read_->currentIndex()),
          static_cast<PermissionDecision>(write_->currentIndex())},
-        actor_id_, rule_source_->currentData().toULongLong());
+        actor_id_, rule_source_->currentData().value<Guid>());
     changed(before);
   } catch (const std::exception& e) {
     error(e);
@@ -469,7 +473,7 @@ void AdminDialog::delete_rule() {
   try {
     auto before = project_.revision();
     project_.remove_rule(node_id_, editing_, actor_id_,
-                         rule_source_->currentData().toULongLong());
+                         rule_source_->currentData().value<Guid>());
     changed(before);
   } catch (const std::exception& e) {
     error(e);
@@ -480,7 +484,7 @@ void AdminDialog::effective() {
     return;
   try {
     auto e = project_.explain(
-        node_id_, effective_user_->currentData().toULongLong(), actor_id_);
+        node_id_, effective_user_->currentData().value<Guid>(), actor_id_);
     effective_->setText(
         QString("Чтение: %1 · Запись: %2\n%3")
             .arg(e.access.read ? "да" : "нет", e.access.write ? "да" : "нет",
@@ -501,7 +505,7 @@ void AdminDialog::grant_options() {
     auto gs = project_.admin_sources(node_id_, actor_id_,
                                      AdminCapability::DelegateAdministration);
     for (std::size_t i = 0; i < gs.size(); ++i)
-      if (gs.get(i).id == grant_source_->currentData().toULongLong())
+      if (gs.get(i).id == grant_source_->currentData().value<Guid>())
         mask = gs.get(i).capabilities;
   }
   for (unsigned i = 0; i < 4; ++i) {
@@ -522,9 +526,9 @@ void AdminDialog::issue_grant() {
     for (unsigned i = 0; i < 4; ++i)
       if (capabilities_[i]->isChecked()) mask |= 1U << i;
     auto before = project_.revision();
-    project_.grant_admin({grant_user_->currentData().toULongLong(), node_id_,
+    project_.grant_admin({grant_user_->currentData().value<Guid>(), node_id_,
                           static_cast<std::uint8_t>(mask),
-                          grant_source_->currentData().toULongLong()},
+                          grant_source_->currentData().value<Guid>()},
                          actor_id_);
     changed(before);
   } catch (const std::exception& e) {
